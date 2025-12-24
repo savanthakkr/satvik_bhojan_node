@@ -1,8 +1,8 @@
 exports.dbs = {
 	mysql_bpr: {
-        read: 'localhost',   // ✅ IPv4 (important)
-        write: 'localhost',  // ✅ IPv4
-        port: 3307,          // ✅ XAMPP MySQL port
+        read: 'localhost',   
+        write: 'localhost',  
+        // port: 3307,          
         database: 'stvik_bhojan',
     },
 };
