@@ -2,7 +2,7 @@ exports.dbs = {
 	mysql_bpr: {
         read: 'localhost',   
         write: 'localhost',  
-        // port: 3307,          
+        port: 3307,          
         database: 'stvik_bhojan',
     },
 };
