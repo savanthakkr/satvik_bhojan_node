@@ -16,7 +16,7 @@ let pools = {};
  * Base DB configuration
  */
 const base = {
-    host: '127.0.0.1',            // ✅ IPv4 only (important on macOS)
+    host: 'localhost',            // ✅ IPv4 only (important on macOS)
     user: 'root',
     password: '',
     database: undefined,
