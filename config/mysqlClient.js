@@ -18,9 +18,8 @@ let pools = {};
 const base = {
     host: 'redoq.amazonaws.com',            // ✅ IPv4 only (important on macOS)
     user: 'root',
-    password: '',
+    password: 'aaaaa',
     database: undefined,
-    port: 3307,                   // ✅ XAMPP MySQL port
     connectionLimit: 50,
     multipleStatements: true,
     dateStrings: true,
@@ -36,61 +35,29 @@ const base = {
 /**
  * Initialize DB pools
  */
-exports.connection = async () => {
-    return new Promise((resolve, reject) => {
-        try {
-            if (utility.checkEmpty(dbs)) {
-                return resolve({});
-            }
-
-            Object.keys(dbs).forEach((dbKey) => {
-                const cfg = dbs[dbKey];
-
-                const commonConfig = {
-                    ...base,
-                    database: cfg.database,
-                    host: cfg.read || base.host,
-                    port: cfg.port || base.port
-                };
-
-                // Service based credentials (if exists)
-                if (
-                    !utility.checkEmpty(constants.vals.service_name) &&
-                    !utility.checkEmpty(dbs_login[constants.vals.service_name])
-                ) {
-                    commonConfig.user = dbs_login[constants.vals.service_name].user;
-                    commonConfig.password = dbs_login[constants.vals.service_name].password;
+exports.connection = async () => new Promise(
+    (resolve, reject) => {
+        if (!utility.checkEmpty(dbs)) {
+            Object.keys(dbs).forEach(function (d) {
+                let o = Object.assign({}, base);
+                o['database'] = dbs[d].database;
+                if (!utility.checkEmpty(constants.vals.service_name) && !utility.checkEmpty(dbs_login[constants.vals.service_name])) {
+                    o['user'] = dbs_login[constants.vals.service_name].user;
+                    o['password'] = dbs_login[constants.vals.service_name].password;
                 }
+                let readPool = o;
+                let writePool = o;
 
-                const readPoolConfig = {
-                    ...commonConfig,
-                    host: cfg.read || base.host
-                };
-
-                const writePoolConfig = {
-                    ...commonConfig,
-                    host: cfg.write || base.host
-                };
-
-                pools[dbKey] = {
-                    read: mysql.createPool(readPoolConfig),
-                    write: mysql.createPool(writePoolConfig)
-                };
+                readPool.host = dbs[d].read;
+                writePool.host = dbs[d].write;
+                console.log("dbsd", dbs[d],"readPool", readPool, "writePool", writePool);
+                pools[d] = {};
+                pools[d].read = mysql.createPool(readPool);
+                pools[d].write = mysql.createPool(writePool);
             });
-
-            // expose globally
-            constants.vals.dbconn = pools;
-
-            console.log('✅ MySQL pools initialized');
-            resolve(pools);
-
-        } catch (err) {
-            console.error('❌ MySQL pool init failed', err);
-            reject(err);
         }
+        resolve(pools);
     });
-};
-
 /**
  * Execute query
  */
