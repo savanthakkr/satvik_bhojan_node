@@ -16,7 +16,7 @@ let pools = {};
  * Base DB configuration
  */
 const base = {
-    host: 'localhost',            // ✅ IPv4 only (important on macOS)
+    host: 'redoq.amazonaws.com',            // ✅ IPv4 only (important on macOS)
     user: 'root',
     password: '',
     database: undefined,
