@@ -966,8 +966,8 @@ exports.getMyOrders = async (req, res) => {
         o.is_paid,
         o.status,
         o.created_at,
-        GROUP_CONCAT(os.delivery_date ORDER BY os.delivery_date) AS delivery_dates,
-        os.slot
+        GROUP_CONCAT(DISTINCT os.delivery_date ORDER BY os.delivery_date) AS delivery_dates,
+        MIN(os.slot) AS slot
       FROM orders o
       JOIN order_schedule os ON o.order_id = os.order_id
       WHERE o.user_id=${user_id}
@@ -983,9 +983,14 @@ exports.getMyOrders = async (req, res) => {
     });
 
   } catch (err) {
-    res.status(500).json({ status: "error", msg: "Internal error" });
+    console.error("GET MY ORDERS ERROR", err);
+    res.status(500).json({
+      status: "error",
+      msg: "Internal error"
+    });
   }
 };
+
 
 
 
