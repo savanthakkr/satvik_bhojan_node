@@ -1196,6 +1196,22 @@ exports.adminSettlePayment = async (req, res) => {
       });
     }
 
+    // 🔹 Fetch user + firebase token
+    const user = await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "users",
+      `WHERE user_id=${user_id}`,
+      "user_id, name, firebase_token, wallet_balance"
+    );
+
+    if (!user) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "User not found"
+      });
+    }
+
+    // 🔹 Insert wallet transaction
     await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "wallet_transactions",
@@ -1203,10 +1219,12 @@ exports.adminSettlePayment = async (req, res) => {
         user_id,
         type: "credit",
         amount,
-        description: `Admin settlement (${mode})`
+        description: `Admin settlement (${mode})`,
+        created_at: req.locals.now
       }
     );
 
+    // 🔹 Update wallet
     await dbQuery.rawQuery(
       constants.vals.defaultDB,
       `
@@ -1215,6 +1233,19 @@ exports.adminSettlePayment = async (req, res) => {
       WHERE user_id = ${user_id}
       `
     );
+
+    // 🔔 SEND FIREBASE NOTIFICATION
+    if (user.firebase_token) {
+      await utility.sendNotification(
+        [user.firebase_token],
+        "wallet",
+        user_id,
+        {
+          title: "Payment Settled",
+          body: `₹${amount} settled by admin via ${mode}`
+        }
+      );
+    }
 
     return utility.apiResponse(req, res, {
       status: "success",
@@ -1229,6 +1260,7 @@ exports.adminSettlePayment = async (req, res) => {
     });
   }
 };
+
 
 
 
@@ -1524,6 +1556,371 @@ exports.getPendingPayments = async (req, res) => {
     status: "success",
     data: rows
   });
+};
+
+
+exports.adminGetUsers = async (req, res) => {
+  try {
+    const rows = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT 
+        u.user_id,
+        u.name,
+        u.email,
+        u.mobile_no,
+        u.is_active,
+        u.created_at,
+
+        COUNT(DISTINCT o.order_id) AS total_orders,
+
+        COALESCE(
+          SUM(
+            CASE 
+              WHEN wt.type='debit' THEN wt.amount
+              WHEN wt.type='credit' THEN -wt.amount
+            END
+          ), 0
+        ) AS pending_wallet_amount
+
+      FROM users u
+      LEFT JOIN orders o ON o.user_id=u.user_id
+      LEFT JOIN wallet_transactions wt ON wt.user_id=u.user_id
+      WHERE u.is_delete=0
+      GROUP BY u.user_id
+      ORDER BY u.user_id DESC
+      `
+    );
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Users fetched",
+      data: rows
+    });
+
+  } catch (err) {
+    console.error("ADMIN GET USERS ERROR", err);
+    res.status(500).json({ status: "error", msg: "Internal error" });
+  }
+};
+
+exports.adminUserDetails = async (req, res) => {
+  try {
+    const { user_id } = req.query;
+
+    // 👤 User
+    const user = await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "users",
+      `WHERE user_id=${user_id} AND is_delete=0`,
+      "user_id,name,email,mobile_no,is_active,created_at"
+    );
+
+    if (!user) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "User not found"
+      });
+    }
+
+    // 🏠 Addresses
+    const addresses = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `SELECT * FROM user_addresses WHERE user_id=${user_id}`
+    );
+
+    // 💰 Wallet
+    const walletTxns = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT *
+      FROM wallet_transactions
+      WHERE user_id=${user_id}
+      ORDER BY created_at DESC
+      `
+    );
+
+    let wallet_balance = 0;
+    for (let t of walletTxns) {
+      if (t.type === "debit") wallet_balance += Number(t.amount);
+      if (t.type === "credit") wallet_balance -= Number(t.amount);
+    }
+
+    // 📦 Orders
+    const orders = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT 
+        o.order_id,
+        o.order_type,
+        o.total_amount,
+        o.is_paid,
+        o.status,
+        o.created_at,
+        GROUP_CONCAT(os.delivery_date ORDER BY os.delivery_date) AS delivery_dates,
+        MIN(os.slot) AS slot
+      FROM orders o
+      JOIN order_schedule os ON os.order_id=o.order_id
+      WHERE o.user_id=${user_id}
+      GROUP BY o.order_id
+      ORDER BY o.order_id DESC
+      `
+    );
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      data: {
+        user,
+        addresses,
+        wallet: {
+          balance: wallet_balance.toFixed(2),
+          transactions: walletTxns
+        },
+        orders
+      }
+    });
+
+  } catch (err) {
+    console.error("ADMIN USER DETAILS ERROR", err);
+    res.status(500).json({ status: "error", msg: "Internal error" });
+  }
+};
+
+
+exports.adminUserOrderHistory = async (req, res) => {
+  try {
+    const { user_id } = req.query;
+
+    const rows = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT 
+        o.order_id,
+        o.total_amount,
+        o.is_paid,
+        o.status,
+        o.created_at,
+        os.delivery_date,
+        os.slot,
+        ua.full_address,
+        oi.quantity,
+        oi.selected_items,
+        m.meals_name,
+        m.bread_count,
+        m.subji_count,
+        m.other_count
+      FROM orders o
+      JOIN order_schedule os ON os.order_id=o.order_id
+      JOIN order_items oi ON oi.order_item_id=os.order_item_id
+      JOIN meals m ON m.meals_id=oi.meals_id
+      LEFT JOIN user_addresses ua ON ua.address_id=os.address_id
+      WHERE o.user_id=${user_id}
+      ORDER BY o.order_id DESC
+      `
+    );
+
+    const result = [];
+
+    for (let r of rows) {
+      const parsed = JSON.parse(r.selected_items || "{}");
+      const selected = parsed.selected_items || {};
+      const extras = parsed.extra_items || [];
+
+      result.push({
+        order_id: r.order_id,
+        delivery_date: r.delivery_date,
+        slot: r.slot,
+        meal: {
+          name: r.meals_name,
+          quantity: r.quantity,
+          structure: {
+            bread_count: r.bread_count,
+            subji_count: r.subji_count,
+            other_count: r.other_count
+          }
+        },
+        selected_items: selected,
+        extra_items: extras,
+        address: r.full_address,
+        payment: {
+          total_amount: r.total_amount,
+          is_paid: r.is_paid
+        },
+        status: r.status,
+        created_at: r.created_at
+      });
+    }
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "User order history fetched",
+      data: result
+    });
+
+  } catch (err) {
+    console.error("ADMIN USER ORDER HISTORY ERROR", err);
+    res.status(500).json({ status: "error", msg: "Internal error" });
+  }
+};
+
+
+
+
+exports.adminSendPendingPaymentNotification = async (req, res) => {
+  try {
+    const { user_id, amount } = req.body;
+
+    if (!user_id || !amount) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "user_id and amount required"
+      });
+    }
+
+    const user = await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "users",
+      `WHERE user_id=${user_id} AND is_delete=0`,
+      "firebase_token,name"
+    );
+
+    if (!user || !user.firebase_token) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "User token not found"
+      });
+    }
+
+    await utility.sendNotification(
+      [user.firebase_token],
+      "wallet",
+      user_id,
+      {
+        title: "Pending Payment Reminder",
+        body: `₹${amount} pending. Please settle your payment.`
+      }
+    );
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Notification sent"
+    });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ status: "error", msg: "Server error" });
+  }
+};
+
+
+
+exports.adminSendMenuUpdateNotification = async (req, res) => {
+  try {
+    const users = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT firebase_token, user_id
+      FROM users
+      WHERE is_active=1 AND is_delete=0 AND firebase_token!=''
+      `
+    );
+
+    const tokens = users.map(u => u.firebase_token);
+
+    if (!tokens.length) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "No users to notify"
+      });
+    }
+
+    await utility.sendNotification(
+      tokens,
+      "order",
+      0,
+      {
+        title: "Menu Updated 🍽️",
+        body: "New dishes added! Order now."
+      }
+    );
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Menu update notification sent"
+    });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ status: "error", msg: "Server error" });
+  }
+};
+
+
+exports.getAdminDashboardStats = async (req, res) => {
+  try {
+    let { from_date, to_date } = req.query;
+
+    if (!from_date || !to_date) {
+      from_date = req.locals.now.split(" ")[0];
+      to_date = from_date;
+    }
+
+    // TOTAL ORDERS
+    const totalOrders = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT COUNT(*) AS total
+      FROM orders
+      WHERE status='active'
+      AND DATE(created_at) BETWEEN '${from_date}' AND '${to_date}'
+      `
+    );
+
+    // TOTAL CUSTOMERS
+    const totalCustomers = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT COUNT(*) AS total
+      FROM users
+      WHERE is_delete=0
+      `
+    );
+
+    // TOTAL PENDING PAYMENT
+    const pendingAmount = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT SUM(wallet_balance) AS total
+      FROM users
+      WHERE wallet_balance > 0
+      `
+    );
+
+    // TOTAL ORDER AMOUNT
+    const totalOrderAmount = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT SUM(total_amount) AS total
+      FROM orders
+      WHERE status='active'
+      AND DATE(created_at) BETWEEN '${from_date}' AND '${to_date}'
+      `
+    );
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      data: {
+        total_orders: totalOrders[0]?.total || 0,
+        total_customers: totalCustomers[0]?.total || 0,
+        pending_payment: pendingAmount[0]?.total || 0,
+        total_order_amount: totalOrderAmount[0]?.total || 0
+      }
+    });
+
+  } catch (err) {
+    console.error("DASHBOARD ERROR", err);
+    res.status(500).json({ status: "error", msg: "Internal error" });
+  }
 };
 
 

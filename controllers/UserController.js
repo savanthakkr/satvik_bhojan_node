@@ -216,7 +216,105 @@ exports.userLogin = async (req, res) => {
 };
 
 
+exports.getUserProfile = async (req, res) => {
+  try {
+    const user_id = req.userInfo?.user_id;
 
+    if (!user_id) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Unauthorized"
+      });
+    }
+
+    // -----------------------------
+    // 1️⃣ Fetch user basic info
+    // -----------------------------
+    const user = await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "users",
+      `WHERE user_id=${user_id} AND is_delete=0`,
+      `
+        user_id,
+        name,
+        email,
+        mobile_no,
+        is_active,
+        created_at
+      `
+    );
+
+    if (!user) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "User not found"
+      });
+    }
+
+    // -----------------------------
+    // 2️⃣ Wallet calculation
+    // -----------------------------
+    const walletTxns = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT type, amount
+      FROM wallet_transactions
+      WHERE user_id=${user_id}
+      `
+    );
+
+    let wallet_balance = 0;
+
+    for (let t of walletTxns) {
+      if (t.type === "debit") wallet_balance += Number(t.amount);
+      if (t.type === "credit") wallet_balance -= Number(t.amount);
+    }
+
+    // -----------------------------
+    // 3️⃣ Default address (optional)
+    // -----------------------------
+    const address = await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "user_addresses",
+      `WHERE user_id=${user_id} AND is_default=1`,
+      `
+        address_id,
+        full_address,
+        city,
+        pincode
+      `
+    );
+
+    // -----------------------------
+    // ✅ Final response
+    // -----------------------------
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Profile fetched",
+      data: {
+        user: {
+          user_id: user.user_id,
+          name: user.name,
+          email: user.email,
+          mobile_no: user.mobile_no,
+          is_active: user.is_active,
+          created_at: user.created_at
+        },
+        wallet: {
+          balance: wallet_balance.toFixed(2)
+        },
+        address: address || null
+      }
+    });
+
+  } catch (err) {
+    console.error("GET USER PROFILE ERROR", err);
+    res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
+  }
+};
 
 
 exports.userGetMeals = async (req, res) => {
@@ -966,8 +1064,8 @@ exports.getMyOrders = async (req, res) => {
         o.is_paid,
         o.status,
         o.created_at,
-        GROUP_CONCAT(DISTINCT os.delivery_date ORDER BY os.delivery_date) AS delivery_dates,
-        MIN(os.slot) AS slot
+        GROUP_CONCAT(os.delivery_date ORDER BY os.delivery_date) AS delivery_dates,
+        os.slot
       FROM orders o
       JOIN order_schedule os ON o.order_id = os.order_id
       WHERE o.user_id=${user_id}
@@ -983,14 +1081,9 @@ exports.getMyOrders = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("GET MY ORDERS ERROR", err);
-    res.status(500).json({
-      status: "error",
-      msg: "Internal error"
-    });
+    res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
-
 
 
 

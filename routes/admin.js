@@ -1,6 +1,6 @@
 var express = require("express");
 var apiMiddleware = require("../middlewares/api");
-const {adminLogin,addMeal,getKitchenSummary,getPendingPayments,getAdminDailyOrders,adminSettlePayment,getAllOrders,toggleOtherItemStatus,deleteOtherItem,editOtherItem,getOtherItem,addOtherItem,toggleSpecialItemStatus,toggleSubjiStatus,toggleBreadStatus,toggleMealStatus,addMealStructure,addBread,getBread,editBread,deleteBread,addSubji,getSubji,editSubji,deleteSubji,addSpecialItem,getSpecialItems,editSpecialItem,deleteSpecialItem,getMeals,editMeal,deleteMeal,adminGetProfile } = require("../controllers/adminController");
+const {getAdminDashboardStats,adminSendPendingPaymentNotification,adminSendMenuUpdateNotification,adminUserOrderHistory,adminUserDetails,adminGetUsers,adminLogin,addMeal,getKitchenSummary,getPendingPayments,getAdminDailyOrders,adminSettlePayment,getAllOrders,toggleOtherItemStatus,deleteOtherItem,editOtherItem,getOtherItem,addOtherItem,toggleSpecialItemStatus,toggleSubjiStatus,toggleBreadStatus,toggleMealStatus,addMealStructure,addBread,getBread,editBread,deleteBread,addSubji,getSubji,editSubji,deleteSubji,addSpecialItem,getSpecialItems,editSpecialItem,deleteSpecialItem,getMeals,editMeal,deleteMeal,adminGetProfile } = require("../controllers/adminController");
 const { adminAuthentication } = require('../middlewares/authentication');
 const FileManager = require("../helpers/file_manager");
 var app = express();
@@ -8,9 +8,29 @@ var app = express();
 // Login
 app.use("/login", apiMiddleware, adminLogin);
 
+
+//
+app.use("/admin_send_menu_update_notification", apiMiddleware, adminAuthentication, adminSendMenuUpdateNotification);
+
+//
+app.use("/admin_send_pending_payment_notification", apiMiddleware, adminAuthentication, adminSendPendingPaymentNotification);
+
 //
 app.use("/get_admin_profile", apiMiddleware, adminAuthentication, adminGetProfile);
 
+
+//
+app.use("/get_admin_dashboard_stats", apiMiddleware, adminAuthentication, getAdminDashboardStats);
+
+
+//
+app.use("/admin_user_order_history", apiMiddleware, adminAuthentication, adminUserOrderHistory);
+
+//
+app.use("/admin_user_details", apiMiddleware, adminAuthentication, adminUserDetails);
+
+//
+app.use("/admin_get_all_Users", apiMiddleware, adminAuthentication, adminGetUsers);
 
 //
 app.use("/get_kitchen_summary", apiMiddleware, adminAuthentication, getKitchenSummary);
