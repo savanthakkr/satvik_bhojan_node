@@ -16,203 +16,203 @@ const FIREBASE_API_KEY = "AIzaSyDVPHjZwCXmiMVUps0MucNzYko9a-AGcWQ";
 
 // User register
 exports.userRegister = async (req, res) => {
-    try {
-        let body = req.body.inputdata;
-        let response = { status: "error", msg: "" };
+  try {
+    let body = req.body.inputdata;
+    let response = { status: "error", msg: "" };
 
-        body.email = body.email?.trim().toLowerCase() || "";
-        body.mobile_no = body.mobile_no?.trim() || "";
+    body.email = body.email?.trim().toLowerCase() || "";
+    body.mobile_no = body.mobile_no?.trim() || "";
 
-        // -----------------------------
-        // VALIDATIONS
-        // -----------------------------
-        if (utility.checkEmptyString(body.name)) {
-            response.msg = "Name is required.";
-            return utility.apiResponse(req, res, response);
-        }
+    // -----------------------------
+    // VALIDATIONS
+    // -----------------------------
+    if (utility.checkEmptyString(body.name)) {
+      response.msg = "Name is required.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        if (utility.checkEmptyString(body.password)) {
-            response.msg = "Password is required.";
-            return utility.apiResponse(req, res, response);
-        }
+    if (utility.checkEmptyString(body.password)) {
+      response.msg = "Password is required.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        if (utility.checkEmptyString(body.email) && utility.checkEmptyString(body.mobile_no)) {
-            response.msg = "Email or Mobile number is required.";
-            return utility.apiResponse(req, res, response);
-        }
+    if (utility.checkEmptyString(body.email) && utility.checkEmptyString(body.mobile_no)) {
+      response.msg = "Email or Mobile number is required.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        // -----------------------------
-        // CHECK DUPLICATE EMAIL
-        // -----------------------------
-        if (!utility.checkEmptyString(body.email)) {
-            let emailExist = await dbQuery.rawQuery(
-                constants.vals.defaultDB,
-                `
+    // -----------------------------
+    // CHECK DUPLICATE EMAIL
+    // -----------------------------
+    if (!utility.checkEmptyString(body.email)) {
+      let emailExist = await dbQuery.rawQuery(
+        constants.vals.defaultDB,
+        `
                 SELECT user_id FROM users
                 WHERE LOWER(TRIM(email)) = '${body.email}'
                 AND is_delete = 0
                 LIMIT 1
                 `
-            );
+      );
 
-            if (emailExist.length > 0) {
-                response.msg = "Email already registered.";
-                return utility.apiResponse(req, res, response);
-            }
-        }
+      if (emailExist.length > 0) {
+        response.msg = "Email already registered.";
+        return utility.apiResponse(req, res, response);
+      }
+    }
 
-        // -----------------------------
-        // CHECK DUPLICATE MOBILE
-        // -----------------------------
-        if (!utility.checkEmptyString(body.mobile_no)) {
-            let mobileExist = await dbQuery.rawQuery(
-                constants.vals.defaultDB,
-                `
+    // -----------------------------
+    // CHECK DUPLICATE MOBILE
+    // -----------------------------
+    if (!utility.checkEmptyString(body.mobile_no)) {
+      let mobileExist = await dbQuery.rawQuery(
+        constants.vals.defaultDB,
+        `
                 SELECT user_id FROM users
                 WHERE TRIM(mobile_no) = '${body.mobile_no}'
                 AND is_delete = 0
                 LIMIT 1
                 `
-            );
+      );
 
-            if (mobileExist.length > 0) {
-                response.msg = "Mobile number already registered.";
-                return utility.apiResponse(req, res, response);
-            }
-        }
+      if (mobileExist.length > 0) {
+        response.msg = "Mobile number already registered.";
+        return utility.apiResponse(req, res, response);
+      }
+    }
 
-        // -----------------------------
-        // HASH PASSWORD
-        // -----------------------------
-        const hashedPassword = await bcrypt.hash(body.password, 10);
+    // -----------------------------
+    // HASH PASSWORD
+    // -----------------------------
+    const hashedPassword = await bcrypt.hash(body.password, 10);
 
-        // -----------------------------
-        // INSERT USER
-        // -----------------------------
-        let userId = await dbQuery.insertSingle(
-            constants.vals.defaultDB,
-            "users",
-            {
-                name: body.name,
-                email: body.email || null,
-                mobile_no: body.mobile_no || null,
-                password: hashedPassword,
-                firebase_token: "",
-                is_active: 1,
-                is_delete: 0,
-                created_at: req.locals.now
-            }
-        );
+    // -----------------------------
+    // INSERT USER
+    // -----------------------------
+    let userId = await dbQuery.insertSingle(
+      constants.vals.defaultDB,
+      "users",
+      {
+        name: body.name,
+        email: body.email || null,
+        mobile_no: body.mobile_no || null,
+        password: hashedPassword,
+        firebase_token: "",
+        is_active: 1,
+        is_delete: 0,
+        created_at: req.locals.now
+      }
+    );
 
-        // -----------------------------
-        // GENERATE JWT TOKEN FOR AUTO LOGIN
-        // -----------------------------
-        const token = jwt.sign(
-            { user_id: userId, mobile_no: body.mobile_no },
-            "apiservice",
-            { expiresIn: "7d" }
-        );
+    // -----------------------------
+    // GENERATE JWT TOKEN FOR AUTO LOGIN
+    // -----------------------------
+    const token = jwt.sign(
+      { user_id: userId, mobile_no: body.mobile_no },
+      "apiservice",
+      { expiresIn: "7d" }
+    );
 
-        // -----------------------------
-        // STORE TOKEN IN `users.user_Token`
-        // -----------------------------
-        await dbQuery.updateRecord(
-            constants.vals.defaultDB,
-            "users",
-            `user_id=${userId}`,
-            `
+    // -----------------------------
+    // STORE TOKEN IN `users.user_Token`
+    // -----------------------------
+    await dbQuery.updateRecord(
+      constants.vals.defaultDB,
+      "users",
+      `user_id=${userId}`,
+      `
                 user_Token='${token}',
                 updated_at='${req.locals.now}'
             `
-        );
+    );
 
-        // -----------------------------
-        // SUCCESS RESPONSE
-        // -----------------------------
-        return utility.apiResponse(req, res, {
-            status: "success",
-            msg: "User registered successfully.",
-            data: {
-                user_id: userId,
-                token
-            }
-        });
+    // -----------------------------
+    // SUCCESS RESPONSE
+    // -----------------------------
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "User registered successfully.",
+      data: {
+        user_id: userId,
+        token
+      }
+    });
 
-    } catch (err) {
-        console.error("Register Error:", err);
-        return res.status(500).json({ status: "error", msg: "Internal server error" });
-    }
+  } catch (err) {
+    console.error("Register Error:", err);
+    return res.status(500).json({ status: "error", msg: "Internal server error" });
+  }
 };
 
 
 
 
 exports.userLogin = async (req, res) => {
-    try {
-        let response = { status: "error", msg: "" };
-        const body = req?.body?.inputdata;
+  try {
+    let response = { status: "error", msg: "" };
+    const body = req?.body?.inputdata;
 
-        if (!body.mobile_no || !body.password) {
-            response.msg = "Mobile number & password are required.";
-            return utility.apiResponse(req, res, response);
-        }
+    if (!body.mobile_no || !body.password) {
+      response.msg = "Mobile number & password are required.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        // Fetch user
-        const user = await dbQuery.fetchSingleRecord(
-            constants.vals.defaultDB,
-            "users",
-            `WHERE mobile_no='${body.mobile_no}' AND is_delete=0 AND is_active=1`,
-            "user_id, name, mobile_no, password"
-        );
+    // Fetch user
+    const user = await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "users",
+      `WHERE mobile_no='${body.mobile_no}' AND is_delete=0 AND is_active=1`,
+      "user_id, name, mobile_no, password"
+    );
 
-        if (!user) {
-            response.msg = "User not found.";
-            return utility.apiResponse(req, res, response);
-        }
+    if (!user) {
+      response.msg = "User not found.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        // Compare password
-        const passMatch = await bcrypt.compare(body.password, user.password);
+    // Compare password
+    const passMatch = await bcrypt.compare(body.password, user.password);
 
-        if (!passMatch) {
-            response.msg = "Invalid password.";
-            return utility.apiResponse(req, res, response);
-        }
+    if (!passMatch) {
+      response.msg = "Invalid password.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        // Generate token
-        const token = jwt.sign(
-            { user_id: user.user_id, mobile_no: user.mobile_no },
-            "apiservice",
-            { expiresIn: "7d" }
-        );
+    // Generate token
+    const token = jwt.sign(
+      { user_id: user.user_id, mobile_no: user.mobile_no },
+      "apiservice",
+      { expiresIn: "7d" }
+    );
 
-        // Store token IN YOUR TABLE USER_TOKEN
-        const updateValue = `
+    // Store token IN YOUR TABLE USER_TOKEN
+    const updateValue = `
             user_Token='${token}',
             updated_at='${req.locals.now}'
         `;
 
-        await dbQuery.updateRecord(
-            constants.vals.defaultDB,
-            "users",
-            `user_id=${user.user_id}`,
-            updateValue
-        );
+    await dbQuery.updateRecord(
+      constants.vals.defaultDB,
+      "users",
+      `user_id=${user.user_id}`,
+      updateValue
+    );
 
-        delete user.password;
+    delete user.password;
 
-        response.status = "success";
-        response.msg = "Login successful.";
-        response.data = {
-            user,
-            token
-        };
+    response.status = "success";
+    response.msg = "Login successful.";
+    response.data = {
+      user,
+      token
+    };
 
-        return utility.apiResponse(req, res, response);
+    return utility.apiResponse(req, res, response);
 
-    } catch (err) {
-        console.error("User Login Error:", err);
-        return res.status(500).json({ status: "error", msg: "Internal server error" });
-    }
+  } catch (err) {
+    console.error("User Login Error:", err);
+    return res.status(500).json({ status: "error", msg: "Internal server error" });
+  }
 };
 
 
@@ -318,206 +318,206 @@ exports.getUserProfile = async (req, res) => {
 
 
 exports.userGetMeals = async (req, res) => {
-    try {
-        // Only show active & not deleted meals to user
-        const condition = "WHERE is_delete = 0 AND is_active = 1";
-        const fields =
-            "meals_id, meals_name, price, description, bread_count, subji_count, other_count, is_special_meal, special_item_id, created_at";
+  try {
+    // Only show active & not deleted meals to user
+    const condition = "WHERE is_delete = 0 AND is_active = 1";
+    const fields =
+      "meals_id, meals_name, price, description, bread_count, subji_count, other_count, is_special_meal, special_item_id, created_at";
 
-        const meals = await dbQuery.fetchRecords(
-            constants.vals.defaultDB,
-            "meals",
-            condition,
-            fields
-        );
+    const meals = await dbQuery.fetchRecords(
+      constants.vals.defaultDB,
+      "meals",
+      condition,
+      fields
+    );
 
-        // Add selection status
-        const finalMeals = meals.map(meal => ({
-            ...meal,
-            selection_rules: {
-                allow_subji: meal.subji_count > 0,
-                subji_count: meal.subji_count,
-                allow_bread: meal.bread_count > 0,
-                bread_count: meal.bread_count,
-                allow_other_items: meal.other_count > 0,
-                other_count: meal.other_count
-            }
-        }));
+    // Add selection status
+    const finalMeals = meals.map(meal => ({
+      ...meal,
+      selection_rules: {
+        allow_subji: meal.subji_count > 0,
+        subji_count: meal.subji_count,
+        allow_bread: meal.bread_count > 0,
+        bread_count: meal.bread_count,
+        allow_other_items: meal.other_count > 0,
+        other_count: meal.other_count
+      }
+    }));
 
-        return utility.apiResponse(req, res, {
-            status: "success",
-            msg: "Meals fetched successfully.",
-            data: finalMeals
-        });
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Meals fetched successfully.",
+      data: finalMeals
+    });
 
-    } catch (error) {
-        console.error("Get Meals Error:", error);
-        return res.status(500).json({ status: "error", msg: "Internal server error" });
-    }
+  } catch (error) {
+    console.error("Get Meals Error:", error);
+    return res.status(500).json({ status: "error", msg: "Internal server error" });
+  }
 };
 
 exports.userGetSubjiList = async (req, res) => {
-    try {
-        const condition = "WHERE is_delete = 0 AND is_active = 1";
-        const fields = "subji_id, name, price, created_at";
+  try {
+    const condition = "WHERE is_delete = 0 AND is_active = 1";
+    const fields = "subji_id, name, price, created_at";
 
-        const list = await dbQuery.fetchRecords(
-            constants.vals.defaultDB,
-            "subjis",
-            condition,
-            fields
-        );
+    const list = await dbQuery.fetchRecords(
+      constants.vals.defaultDB,
+      "subjis",
+      condition,
+      fields
+    );
 
-        return utility.apiResponse(req, res, {
-            status: "success",
-            msg: "Subji list fetched.",
-            data: list
-        });
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Subji list fetched.",
+      data: list
+    });
 
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ status: "error", msg: "Internal server error" });
-    }
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ status: "error", msg: "Internal server error" });
+  }
 };
 
 exports.userGetBreadList = async (req, res) => {
-    try {
-        const condition = "WHERE is_delete = 0 AND is_active = 1";
-        const fields = "bread_id, name, price, created_at";
+  try {
+    const condition = "WHERE is_delete = 0 AND is_active = 1";
+    const fields = "bread_id, name, price, created_at";
 
-        const list = await dbQuery.fetchRecords(
-            constants.vals.defaultDB,
-            "breads",
-            condition,
-            fields
-        );
+    const list = await dbQuery.fetchRecords(
+      constants.vals.defaultDB,
+      "breads",
+      condition,
+      fields
+    );
 
-        return utility.apiResponse(req, res, {
-            status: "success",
-            msg: "Bread list fetched.",
-            data: list
-        });
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Bread list fetched.",
+      data: list
+    });
 
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ status: "error", msg: "Internal server error" });
-    }
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ status: "error", msg: "Internal server error" });
+  }
 };
 
 exports.getSpecialItems = async (req, res) => {
-    try {
-        let response = { status: "error", msg: "" };
+  try {
+    let response = { status: "error", msg: "" };
 
-        const list = await dbQuery.rawQuery(
-            constants.vals.defaultDB,
-            `SELECT special_item_id, name, price
+    const list = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `SELECT special_item_id, name, price
              FROM special_items
              WHERE is_delete = 0 AND is_active = 1
              ORDER BY special_item_id DESC`
-        );
+    );
 
-        response.status = "success";
-        response.msg = "Active special items fetched.";
-        response.data = list;
+    response.status = "success";
+    response.msg = "Active special items fetched.";
+    response.data = list;
 
-        return utility.apiResponse(req, res, response);
+    return utility.apiResponse(req, res, response);
 
-    } catch (err) {
-        console.error("User Special Items Error:", err);
-        return res.status(500).json({ status: "error", msg: "Internal error" });
-    }
+  } catch (err) {
+    console.error("User Special Items Error:", err);
+    return res.status(500).json({ status: "error", msg: "Internal error" });
+  }
 };
 
 
 exports.addUserAddress = async (req, res) => {
-    try {
-        let body = req.body.inputdata;
-        let response = { status: "error", msg: "" };
-        const userId = req.userInfo.user_id;
+  try {
+    let body = req.body.inputdata;
+    let response = { status: "error", msg: "" };
+    const userId = req.userInfo.user_id;
 
-        if (!body.full_address) {
-            response.msg = "Full address is required.";
-            return utility.apiResponse(req, res, response);
-        }
-
-        // If setting default → remove default from others
-        if (body.is_default == 1) {
-            await dbQuery.updateRecord(
-                constants.vals.defaultDB,
-                "user_addresses",
-                `user_id=${userId}`,
-                `is_default=0`
-            );
-        }
-
-        const params = {
-            user_id: userId,
-            address_title: body.address_title || null,
-            full_address: body.full_address,
-            landmark: body.landmark || null,
-            city: body.city || null,
-            state: body.state || null,
-            pincode: body.pincode || null,
-            latitude: body.latitude || null,
-            longitude: body.longitude || null,
-            is_default: body.is_default || 0,
-            is_active: 1,
-            is_delete: 0,
-            created_at: req.locals.now
-        };
-
-        const insertId = await dbQuery.insertSingle(
-            constants.vals.defaultDB,
-            "user_addresses",
-            params
-        );
-
-        response.status = "success";
-        response.msg = "Address added successfully.";
-        response.data = { address_id: insertId };
-
-        return utility.apiResponse(req, res, response);
-
-    } catch (err) {
-        console.error("Add Address Error:", err);
-        return res.status(500).json({ status: "error", msg: "Internal error" });
+    if (!body.full_address) {
+      response.msg = "Full address is required.";
+      return utility.apiResponse(req, res, response);
     }
+
+    // If setting default → remove default from others
+    if (body.is_default == 1) {
+      await dbQuery.updateRecord(
+        constants.vals.defaultDB,
+        "user_addresses",
+        `user_id=${userId}`,
+        `is_default=0`
+      );
+    }
+
+    const params = {
+      user_id: userId,
+      address_title: body.address_title || null,
+      full_address: body.full_address,
+      landmark: body.landmark || null,
+      city: body.city || null,
+      state: body.state || null,
+      pincode: body.pincode || null,
+      latitude: body.latitude || null,
+      longitude: body.longitude || null,
+      is_default: body.is_default || 0,
+      is_active: 1,
+      is_delete: 0,
+      created_at: req.locals.now
+    };
+
+    const insertId = await dbQuery.insertSingle(
+      constants.vals.defaultDB,
+      "user_addresses",
+      params
+    );
+
+    response.status = "success";
+    response.msg = "Address added successfully.";
+    response.data = { address_id: insertId };
+
+    return utility.apiResponse(req, res, response);
+
+  } catch (err) {
+    console.error("Add Address Error:", err);
+    return res.status(500).json({ status: "error", msg: "Internal error" });
+  }
 };
 
 
 exports.editUserAddress = async (req, res) => {
-    try {
-        let body = req.body.inputdata;
-        let response = { status: "error", msg: "" };
-        const userId = req.userInfo.user_id;
+  try {
+    let body = req.body.inputdata;
+    let response = { status: "error", msg: "" };
+    const userId = req.userInfo.user_id;
 
-        if (!body.address_id) {
-            response.msg = "Address ID is required.";
-            return utility.apiResponse(req, res, response);
-        }
+    if (!body.address_id) {
+      response.msg = "Address ID is required.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        const record = await dbQuery.fetchSingleRecord(
-            constants.vals.defaultDB,
-            "user_addresses",
-            `WHERE address_id=${body.address_id} AND user_id=${userId} AND is_delete=0`,
-            "address_id"
-        );
+    const record = await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "user_addresses",
+      `WHERE address_id=${body.address_id} AND user_id=${userId} AND is_delete=0`,
+      "address_id"
+    );
 
-        if (!record) {
-            response.msg = "Address not found.";
-            return utility.apiResponse(req, res, response);
-        }
+    if (!record) {
+      response.msg = "Address not found.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        if (body.is_default == 1) {
-            await dbQuery.updateRecord(
-                constants.vals.defaultDB,
-                "user_addresses",
-                `user_id=${userId}`,
-                `is_default=0`
-            );
-        }
+    if (body.is_default == 1) {
+      await dbQuery.updateRecord(
+        constants.vals.defaultDB,
+        "user_addresses",
+        `user_id=${userId}`,
+        `is_default=0`
+      );
+    }
 
-        const updateValue = `
+    const updateValue = `
             address_title='${body.address_title || ""}',
             full_address='${body.full_address || ""}',
             landmark='${body.landmark || ""}',
@@ -530,221 +530,221 @@ exports.editUserAddress = async (req, res) => {
             updated_at='${req.locals.now}'
         `;
 
-        await dbQuery.updateRecord(
-            constants.vals.defaultDB,
-            "user_addresses",
-            `address_id=${body.address_id}`,
-            updateValue
-        );
+    await dbQuery.updateRecord(
+      constants.vals.defaultDB,
+      "user_addresses",
+      `address_id=${body.address_id}`,
+      updateValue
+    );
 
-        response.status = "success";
-        response.msg = "Address updated successfully.";
-        return utility.apiResponse(req, res, response);
+    response.status = "success";
+    response.msg = "Address updated successfully.";
+    return utility.apiResponse(req, res, response);
 
-    } catch (err) {
-        console.error("Edit Address Error:", err);
-        return res.status(500).json({ status: "error", msg: "Internal error" });
-    }
+  } catch (err) {
+    console.error("Edit Address Error:", err);
+    return res.status(500).json({ status: "error", msg: "Internal error" });
+  }
 };
 
 
 exports.deleteUserAddress = async (req, res) => {
-    try {
-        let body = req.body.inputdata;
-        let response = { status: "error", msg: "" };
-        const userId = req.userInfo.user_id;
+  try {
+    let body = req.body.inputdata;
+    let response = { status: "error", msg: "" };
+    const userId = req.userInfo.user_id;
 
-        if (!body.address_id) {
-            response.msg = "Address ID is required.";
-            return utility.apiResponse(req, res, response);
-        }
+    if (!body.address_id) {
+      response.msg = "Address ID is required.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        const exists = await dbQuery.fetchSingleRecord(
-            constants.vals.defaultDB,
-            "user_addresses",
-            `WHERE address_id=${body.address_id} AND user_id=${userId} AND is_delete=0`,
-            "address_id"
-        );
+    const exists = await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "user_addresses",
+      `WHERE address_id=${body.address_id} AND user_id=${userId} AND is_delete=0`,
+      "address_id"
+    );
 
-        if (!exists) {
-            response.msg = "Address not found.";
-            return utility.apiResponse(req, res, response);
-        }
+    if (!exists) {
+      response.msg = "Address not found.";
+      return utility.apiResponse(req, res, response);
+    }
 
-        const updateValue = `
+    const updateValue = `
             is_delete=1,
             updated_at='${req.locals.now}'
         `;
 
-        await dbQuery.updateRecord(
-            constants.vals.defaultDB,
-            "user_addresses",
-            `address_id=${body.address_id}`,
-            updateValue
-        );
+    await dbQuery.updateRecord(
+      constants.vals.defaultDB,
+      "user_addresses",
+      `address_id=${body.address_id}`,
+      updateValue
+    );
 
-        response.status = "success";
-        response.msg = "Address deleted successfully.";
-        return utility.apiResponse(req, res, response);
+    response.status = "success";
+    response.msg = "Address deleted successfully.";
+    return utility.apiResponse(req, res, response);
 
-    } catch (err) {
-        console.error("Delete Address Error:", err);
-        return res.status(500).json({ status: "error", msg: "Internal error" });
-    }
+  } catch (err) {
+    console.error("Delete Address Error:", err);
+    return res.status(500).json({ status: "error", msg: "Internal error" });
+  }
 };
 
 
 
 exports.listUserAddresses = async (req, res) => {
-    try {
-        let response = { status: "error", msg: "" };
-        const userId = req.userInfo.user_id;
+  try {
+    let response = { status: "error", msg: "" };
+    const userId = req.userInfo.user_id;
 
-        const list = await dbQuery.rawQuery(
-            constants.vals.defaultDB,
-            `SELECT address_id, address_title, full_address, landmark, city, state,
+    const list = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `SELECT address_id, address_title, full_address, landmark, city, state,
                     pincode, latitude, longitude, is_default, created_at
              FROM user_addresses
              WHERE user_id=${userId} AND is_delete=0
              ORDER BY is_default DESC, address_id DESC`
-        );
+    );
 
-        response.status = "success";
-        response.msg = "Address list fetched.";
-        response.data = list;
+    response.status = "success";
+    response.msg = "Address list fetched.";
+    response.data = list;
 
-        return utility.apiResponse(req, res, response);
+    return utility.apiResponse(req, res, response);
 
-    } catch (err) {
-        console.error("List Address Error:", err);
-        return res.status(500).json({ status: "error", msg: "Internal error" });
-    }
+  } catch (err) {
+    console.error("List Address Error:", err);
+    return res.status(500).json({ status: "error", msg: "Internal error" });
+  }
 };
 
 
 
 exports.addToCart = async (req, res) => {
-    try {
-        const body = req.body.inputdata || {};
+  try {
+    const body = req.body.inputdata || {};
 
-        // ✅ ONLY logged-in user
-        const user_id = req.userInfo?.user_id;
+    // ✅ ONLY logged-in user
+    const user_id = req.userInfo?.user_id;
 
-        console.log("ADD CART USER ID:", user_id);
+    console.log("ADD CART USER ID:", user_id);
 
-        if (!user_id) {
-            return utility.apiResponse(req, res, {
-                status: "error",
-                msg: "Unauthorized"
-            });
-        }
-
-        if (!body.meal_id && (!body.extra_items || body.extra_items.length === 0)) {
-            return utility.apiResponse(req, res, {
-                status: "error",
-                msg: "Meal or Extra items required"
-            });
-        }
-
-        const pick = (r) => Array.isArray(r) ? r[0] : r;
-
-        let mealPrice = 0;
-
-        if (body.meal_id) {
-            const meal = pick(await dbQuery.fetchSingleRecord(
-                constants.vals.defaultDB,
-                "meals",
-                `WHERE meals_id=${body.meal_id}`,
-                "meals_id, price"
-            ));
-
-            if (!meal) {
-                return utility.apiResponse(req, res, {
-                    status: "error",
-                    msg: "Meal not found"
-                });
-            }
-
-            mealPrice = Number(meal.price) * Number(body.meal_quantity || 1);
-        }
-
-        let extraItems = [];
-        let extraTotal = 0;
-
-        if (Array.isArray(body.extra_items)) {
-            for (let ex of body.extra_items) {
-
-                let item = null;
-                let type = null;
-
-                item = pick(await dbQuery.fetchSingleRecord(
-                    constants.vals.defaultDB,
-                    "breads",
-                    `WHERE bread_id=${ex.item_id}`,
-                    "bread_id AS id, name, price"
-                ));
-                if (item) type = "bread";
-
-                if (!item) {
-                    item = pick(await dbQuery.fetchSingleRecord(
-                        constants.vals.defaultDB,
-                        "subjis",
-                        `WHERE subji_id=${ex.item_id}`,
-                        "subji_id AS id, name, price"
-                    ));
-                    if (item) type = "subji";
-                }
-
-                if (!item) continue;
-
-                const qty = Number(ex.quantity || 1);
-                const subtotal = qty * Number(item.price);
-
-                extraItems.push({
-                    item_id: item.id,
-                    item_type: type,
-                    quantity: qty,
-                    price: item.price,
-                    subtotal
-                });
-
-                extraTotal += subtotal;
-            }
-        }
-
-        const finalTotal = mealPrice + extraTotal;
-
-        const cartID = await dbQuery.insertSingle(
-            constants.vals.defaultDB,
-            "user_cart",
-            {
-                user_id,
-                meal_id: body.meal_id,
-                meal_quantity: body.meal_quantity || 1,
-                selected_items: JSON.stringify(body.selected_items || {}),
-                extra_items: JSON.stringify(extraItems),
-                total_price: finalTotal,
-                created_at: req.locals.now,
-                updated_at: req.locals.now
-            }
-        );
-
-        return utility.apiResponse(req, res, {
-            status: "success",
-            msg: "Item added",
-            data: {
-                cart_id: cartID,
-                total_price: finalTotal
-            }
-        });
-
-    } catch (err) {
-        console.error("ADD CART ERROR", err);
-        return res.status(500).json({
-            status: "error",
-            msg: "Internal error"
-        });
+    if (!user_id) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Unauthorized"
+      });
     }
+
+    if (!body.meal_id && (!body.extra_items || body.extra_items.length === 0)) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Meal or Extra items required"
+      });
+    }
+
+    const pick = (r) => Array.isArray(r) ? r[0] : r;
+
+    let mealPrice = 0;
+
+    if (body.meal_id) {
+      const meal = pick(await dbQuery.fetchSingleRecord(
+        constants.vals.defaultDB,
+        "meals",
+        `WHERE meals_id=${body.meal_id}`,
+        "meals_id, price"
+      ));
+
+      if (!meal) {
+        return utility.apiResponse(req, res, {
+          status: "error",
+          msg: "Meal not found"
+        });
+      }
+
+      mealPrice = Number(meal.price) * Number(body.meal_quantity || 1);
+    }
+
+    let extraItems = [];
+    let extraTotal = 0;
+
+    if (Array.isArray(body.extra_items)) {
+      for (let ex of body.extra_items) {
+
+        let item = null;
+        let type = null;
+
+        item = pick(await dbQuery.fetchSingleRecord(
+          constants.vals.defaultDB,
+          "breads",
+          `WHERE bread_id=${ex.item_id}`,
+          "bread_id AS id, name, price"
+        ));
+        if (item) type = "bread";
+
+        if (!item) {
+          item = pick(await dbQuery.fetchSingleRecord(
+            constants.vals.defaultDB,
+            "subjis",
+            `WHERE subji_id=${ex.item_id}`,
+            "subji_id AS id, name, price"
+          ));
+          if (item) type = "subji";
+        }
+
+        if (!item) continue;
+
+        const qty = Number(ex.quantity || 1);
+        const subtotal = qty * Number(item.price);
+
+        extraItems.push({
+          item_id: item.id,
+          item_type: type,
+          quantity: qty,
+          price: item.price,
+          subtotal
+        });
+
+        extraTotal += subtotal;
+      }
+    }
+
+    const finalTotal = mealPrice + extraTotal;
+
+    const cartID = await dbQuery.insertSingle(
+      constants.vals.defaultDB,
+      "user_cart",
+      {
+        user_id,
+        meal_id: body.meal_id,
+        meal_quantity: body.meal_quantity || 1,
+        selected_items: JSON.stringify(body.selected_items || {}),
+        extra_items: JSON.stringify(extraItems),
+        total_price: finalTotal,
+        created_at: req.locals.now,
+        updated_at: req.locals.now
+      }
+    );
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Item added",
+      data: {
+        cart_id: cartID,
+        total_price: finalTotal
+      }
+    });
+
+  } catch (err) {
+    console.error("ADD CART ERROR", err);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal error"
+    });
+  }
 };
 
 
@@ -818,6 +818,9 @@ exports.getCart = async (req, res) => {
       // -----------------------------
       // Extra items (bread / subji)
       // -----------------------------
+      // -----------------------------
+      // Extra items (bread / subji)
+      // -----------------------------
       let extraItems = [];
 
       for (let ex of extras) {
@@ -828,7 +831,7 @@ exports.getCart = async (req, res) => {
             constants.vals.defaultDB,
             "breads",
             `WHERE bread_id=${ex.item_id}`,
-            "name, price"
+            "bread_id AS id, name, price"
           );
         }
 
@@ -837,19 +840,22 @@ exports.getCart = async (req, res) => {
             constants.vals.defaultDB,
             "subjis",
             `WHERE subji_id=${ex.item_id}`,
-            "name, price"
+            "subji_id AS id, name, price"
           );
         }
 
         if (!item) continue;
 
         extraItems.push({
+          item_id: item.id,          // ✅ added
+          item_type: ex.item_type,   // ✅ added
           name: item.name,
           price: item.price,
           quantity: ex.quantity,
           subtotal: ex.subtotal
         });
       }
+
 
       // -----------------------------
       // Final object
@@ -899,31 +905,31 @@ exports.getCart = async (req, res) => {
 
 
 exports.deleteCart = async (req, res) => {
-    try {
-        const body = req.body.inputdata;
+  try {
+    const body = req.body.inputdata;
 
-        if (!body.cart_id) {
-            return utility.apiResponse(req, res, {
-                status: "error",
-                msg: "Cart ID required."
-            });
-        }
-
-        await dbQuery.deleteRecord(
-            constants.vals.defaultDB,
-            "user_cart",
-            `cart_id=${body.cart_id}`
-        );
-
-        return utility.apiResponse(req, res, {
-            status: "success",
-            msg: "Cart deleted successfully."
-        });
-
-    } catch (err) {
-        console.error("Delete Cart Error:", err);
-        return res.status(500).json({ status: "error", msg: "Internal error" });
+    if (!body.cart_id) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Cart ID required."
+      });
     }
+
+    await dbQuery.deleteRecord(
+      constants.vals.defaultDB,
+      "user_cart",
+      `cart_id=${body.cart_id}`
+    );
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Cart deleted successfully."
+    });
+
+  } catch (err) {
+    console.error("Delete Cart Error:", err);
+    return res.status(500).json({ status: "error", msg: "Internal error" });
+  }
 };
 
 
@@ -1090,155 +1096,155 @@ exports.getMyOrders = async (req, res) => {
 };
 
 exports.updateCart = async (req, res) => {
-    try {
-        const body = req.body.inputdata || {};
-        const user_id = req.userInfo?.user_id;
+  try {
+    const body = req.body.inputdata || {};
+    const user_id = req.userInfo?.user_id;
 
-        if (!user_id) {
-            return utility.apiResponse(req, res, {
-                status: "error",
-                msg: "Unauthorized"
-            });
-        }
+    if (!user_id) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Unauthorized"
+      });
+    }
 
-        if (!body.cart_id) {
-            return utility.apiResponse(req, res, {
-                status: "error",
-                msg: "Cart ID required"
-            });
-        }
+    if (!body.cart_id) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Cart ID required"
+      });
+    }
 
-        const pick = (r) => Array.isArray(r) ? r[0] : r;
+    const pick = (r) => Array.isArray(r) ? r[0] : r;
 
-        // --------------------------------------------------
-        // 1️⃣ FETCH EXISTING CART
-        // --------------------------------------------------
-        const cart = pick(await dbQuery.fetchSingleRecord(
-            constants.vals.defaultDB,
-            "user_cart",
-            `WHERE cart_id=${body.cart_id} AND user_id=${user_id}`,
-            "*"
+    // --------------------------------------------------
+    // 1️⃣ FETCH EXISTING CART
+    // --------------------------------------------------
+    const cart = pick(await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "user_cart",
+      `WHERE cart_id=${body.cart_id} AND user_id=${user_id}`,
+      "*"
+    ));
+
+    if (!cart) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Cart not found"
+      });
+    }
+
+    // --------------------------------------------------
+    // 2️⃣ MEAL PRICE
+    // --------------------------------------------------
+    let mealPrice = 0;
+    let mealQty = body.meal_quantity || cart.meal_quantity || 1;
+
+    if (cart.meal_id) {
+      const meal = pick(await dbQuery.fetchSingleRecord(
+        constants.vals.defaultDB,
+        "meals",
+        `WHERE meals_id=${cart.meal_id}`,
+        "price"
+      ));
+
+      mealPrice = Number(meal.price) * Number(mealQty);
+    }
+
+    // --------------------------------------------------
+    // 3️⃣ EXTRA ITEMS RECALCULATION
+    // --------------------------------------------------
+    let extraItems = [];
+    let extraTotal = 0;
+
+    if (Array.isArray(body.extra_items)) {
+
+      for (let ex of body.extra_items) {
+
+        let item = null;
+        let type = null;
+
+        item = pick(await dbQuery.fetchSingleRecord(
+          constants.vals.defaultDB,
+          "breads",
+          `WHERE bread_id=${ex.item_id}`,
+          "bread_id AS id, price"
         ));
+        if (item) type = "bread";
 
-        if (!cart) {
-            return utility.apiResponse(req, res, {
-                status: "error",
-                msg: "Cart not found"
-            });
-        }
-
-        // --------------------------------------------------
-        // 2️⃣ MEAL PRICE
-        // --------------------------------------------------
-        let mealPrice = 0;
-        let mealQty = body.meal_quantity || cart.meal_quantity || 1;
-
-        if (cart.meal_id) {
-            const meal = pick(await dbQuery.fetchSingleRecord(
-                constants.vals.defaultDB,
-                "meals",
-                `WHERE meals_id=${cart.meal_id}`,
-                "price"
-            ));
-
-            mealPrice = Number(meal.price) * Number(mealQty);
-        }
-
-        // --------------------------------------------------
-        // 3️⃣ EXTRA ITEMS RECALCULATION
-        // --------------------------------------------------
-        let extraItems = [];
-        let extraTotal = 0;
-
-        if (Array.isArray(body.extra_items)) {
-
-            for (let ex of body.extra_items) {
-
-                let item = null;
-                let type = null;
-
-                item = pick(await dbQuery.fetchSingleRecord(
-                    constants.vals.defaultDB,
-                    "breads",
-                    `WHERE bread_id=${ex.item_id}`,
-                    "bread_id AS id, price"
-                ));
-                if (item) type = "bread";
-
-                if (!item) {
-                    item = pick(await dbQuery.fetchSingleRecord(
-                        constants.vals.defaultDB,
-                        "subjis",
-                        `WHERE subji_id=${ex.item_id}`,
-                        "subji_id AS id, price"
-                    ));
-                    if (item) type = "subji";
-                }
-
-                if (!item) {
-                    item = pick(await dbQuery.fetchSingleRecord(
-                        constants.vals.defaultDB,
-                        "special_items",
-                        `WHERE special_item_id=${ex.item_id}`,
-                        "special_item_id AS id, price"
-                    ));
-                    if (item) type = "special";
-                }
-
-                if (!item) continue;
-
-                const qty = Number(ex.quantity || 1);
-                const subtotal = qty * Number(item.price);
-
-                extraItems.push({
-                    item_id: item.id,
-                    item_type: type,
-                    quantity: qty,
-                    price: item.price,
-                    subtotal
-                });
-
-                extraTotal += subtotal;
-            }
-        }
-
-        // --------------------------------------------------
-        // 4️⃣ FINAL TOTAL
-        // --------------------------------------------------
-        const finalTotal = mealPrice + extraTotal;
-
-        // --------------------------------------------------
-        // 5️⃣ UPDATE CART
-        // --------------------------------------------------
-        await dbQuery.updateRecord(
+        if (!item) {
+          item = pick(await dbQuery.fetchSingleRecord(
             constants.vals.defaultDB,
-            "user_cart",
-            `cart_id=${body.cart_id}`,
-            `
+            "subjis",
+            `WHERE subji_id=${ex.item_id}`,
+            "subji_id AS id, price"
+          ));
+          if (item) type = "subji";
+        }
+
+        if (!item) {
+          item = pick(await dbQuery.fetchSingleRecord(
+            constants.vals.defaultDB,
+            "special_items",
+            `WHERE special_item_id=${ex.item_id}`,
+            "special_item_id AS id, price"
+          ));
+          if (item) type = "special";
+        }
+
+        if (!item) continue;
+
+        const qty = Number(ex.quantity || 1);
+        const subtotal = qty * Number(item.price);
+
+        extraItems.push({
+          item_id: item.id,
+          item_type: type,
+          quantity: qty,
+          price: item.price,
+          subtotal
+        });
+
+        extraTotal += subtotal;
+      }
+    }
+
+    // --------------------------------------------------
+    // 4️⃣ FINAL TOTAL
+    // --------------------------------------------------
+    const finalTotal = mealPrice + extraTotal;
+
+    // --------------------------------------------------
+    // 5️⃣ UPDATE CART
+    // --------------------------------------------------
+    await dbQuery.updateRecord(
+      constants.vals.defaultDB,
+      "user_cart",
+      `cart_id=${body.cart_id}`,
+      `
             meal_quantity=${mealQty},
             selected_items='${JSON.stringify(body.selected_items || {})}',
             extra_items='${JSON.stringify(extraItems)}',
             total_price=${finalTotal},
             updated_at='${req.locals.now}'
             `
-        );
+    );
 
-        return utility.apiResponse(req, res, {
-            status: "success",
-            msg: "Cart updated",
-            data: {
-                cart_id: body.cart_id,
-                total_price: finalTotal
-            }
-        });
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Cart updated",
+      data: {
+        cart_id: body.cart_id,
+        total_price: finalTotal
+      }
+    });
 
-    } catch (err) {
-        console.error("UPDATE CART ERROR", err);
-        return res.status(500).json({
-            status: "error",
-            msg: "Internal error"
-        });
-    }
+  } catch (err) {
+    console.error("UPDATE CART ERROR", err);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal error"
+    });
+  }
 };
 
 
