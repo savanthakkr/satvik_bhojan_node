@@ -1065,10 +1065,10 @@ exports.getMyOrders = async (req, res) => {
         o.status,
         o.created_at,
         GROUP_CONCAT(os.delivery_date ORDER BY os.delivery_date) AS delivery_dates,
-        os.slot
+        MIN(os.slot) AS slot
       FROM orders o
       JOIN order_schedule os ON o.order_id = os.order_id
-      WHERE o.user_id=${user_id}
+      WHERE o.user_id = ${user_id}
       GROUP BY o.order_id
       ORDER BY o.order_id DESC
       `
@@ -1081,8 +1081,164 @@ exports.getMyOrders = async (req, res) => {
     });
 
   } catch (err) {
-    res.status(500).json({ status: "error", msg: "Internal error" });
+    console.error("GET MY ORDERS ERROR:", err);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal error"
+    });
   }
+};
+
+exports.updateCart = async (req, res) => {
+    try {
+        const body = req.body.inputdata || {};
+        const user_id = req.userInfo?.user_id;
+
+        if (!user_id) {
+            return utility.apiResponse(req, res, {
+                status: "error",
+                msg: "Unauthorized"
+            });
+        }
+
+        if (!body.cart_id) {
+            return utility.apiResponse(req, res, {
+                status: "error",
+                msg: "Cart ID required"
+            });
+        }
+
+        const pick = (r) => Array.isArray(r) ? r[0] : r;
+
+        // --------------------------------------------------
+        // 1️⃣ FETCH EXISTING CART
+        // --------------------------------------------------
+        const cart = pick(await dbQuery.fetchSingleRecord(
+            constants.vals.defaultDB,
+            "user_cart",
+            `WHERE cart_id=${body.cart_id} AND user_id=${user_id}`,
+            "*"
+        ));
+
+        if (!cart) {
+            return utility.apiResponse(req, res, {
+                status: "error",
+                msg: "Cart not found"
+            });
+        }
+
+        // --------------------------------------------------
+        // 2️⃣ MEAL PRICE
+        // --------------------------------------------------
+        let mealPrice = 0;
+        let mealQty = body.meal_quantity || cart.meal_quantity || 1;
+
+        if (cart.meal_id) {
+            const meal = pick(await dbQuery.fetchSingleRecord(
+                constants.vals.defaultDB,
+                "meals",
+                `WHERE meals_id=${cart.meal_id}`,
+                "price"
+            ));
+
+            mealPrice = Number(meal.price) * Number(mealQty);
+        }
+
+        // --------------------------------------------------
+        // 3️⃣ EXTRA ITEMS RECALCULATION
+        // --------------------------------------------------
+        let extraItems = [];
+        let extraTotal = 0;
+
+        if (Array.isArray(body.extra_items)) {
+
+            for (let ex of body.extra_items) {
+
+                let item = null;
+                let type = null;
+
+                item = pick(await dbQuery.fetchSingleRecord(
+                    constants.vals.defaultDB,
+                    "breads",
+                    `WHERE bread_id=${ex.item_id}`,
+                    "bread_id AS id, price"
+                ));
+                if (item) type = "bread";
+
+                if (!item) {
+                    item = pick(await dbQuery.fetchSingleRecord(
+                        constants.vals.defaultDB,
+                        "subjis",
+                        `WHERE subji_id=${ex.item_id}`,
+                        "subji_id AS id, price"
+                    ));
+                    if (item) type = "subji";
+                }
+
+                if (!item) {
+                    item = pick(await dbQuery.fetchSingleRecord(
+                        constants.vals.defaultDB,
+                        "special_items",
+                        `WHERE special_item_id=${ex.item_id}`,
+                        "special_item_id AS id, price"
+                    ));
+                    if (item) type = "special";
+                }
+
+                if (!item) continue;
+
+                const qty = Number(ex.quantity || 1);
+                const subtotal = qty * Number(item.price);
+
+                extraItems.push({
+                    item_id: item.id,
+                    item_type: type,
+                    quantity: qty,
+                    price: item.price,
+                    subtotal
+                });
+
+                extraTotal += subtotal;
+            }
+        }
+
+        // --------------------------------------------------
+        // 4️⃣ FINAL TOTAL
+        // --------------------------------------------------
+        const finalTotal = mealPrice + extraTotal;
+
+        // --------------------------------------------------
+        // 5️⃣ UPDATE CART
+        // --------------------------------------------------
+        await dbQuery.updateRecord(
+            constants.vals.defaultDB,
+            "user_cart",
+            `cart_id=${body.cart_id}`,
+            `
+            meal_quantity=${mealQty},
+            selected_items='${JSON.stringify(body.selected_items || {})}',
+            extra_items='${JSON.stringify(extraItems)}',
+            total_price=${finalTotal},
+            updated_at='${req.locals.now}'
+            `
+        );
+
+        return utility.apiResponse(req, res, {
+            status: "success",
+            msg: "Cart updated",
+            data: {
+                cart_id: body.cart_id,
+                total_price: finalTotal
+            }
+        });
+
+    } catch (err) {
+        console.error("UPDATE CART ERROR", err);
+        return res.status(500).json({
+            status: "error",
+            msg: "Internal error"
+        });
+    }
 };
 
 

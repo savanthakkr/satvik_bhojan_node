@@ -1,6 +1,6 @@
 var express = require("express");
 var apiMiddleware = require("../middlewares/api");
-const {getUserProfile,getMyOrders,payWallet,getWallet,cancelOrder,createOrder, userLogin, userRegister,deleteCart,listUserAddresses,getSpecialItems,userGetMeals,userGetSubjiList,userGetBreadList,getOrderDetails,addToCart,getCart,addUserAddress, editUserAddress, deleteUserAddress, } = require("../controllers/UserController");
+const {updateCart,getUserProfile,getMyOrders,payWallet,getWallet,cancelOrder,createOrder, userLogin, userRegister,deleteCart,listUserAddresses,getSpecialItems,userGetMeals,userGetSubjiList,userGetBreadList,getOrderDetails,addToCart,getCart,addUserAddress, editUserAddress, deleteUserAddress, } = require("../controllers/UserController");
 const { authentication } = require('../middlewares/authentication');
 const FileManager = require("../helpers/file_manager");
 
@@ -20,6 +20,8 @@ app.use("/get_user_profile", apiMiddleware, authentication, getUserProfile);
 
 // 
 app.use("/get_my_orders", apiMiddleware, authentication, getMyOrders);
+
+app.use("/update_cart", apiMiddleware, authentication, updateCart);
 
 // 
 app.use("/pay_wallet", apiMiddleware, authentication, payWallet);
