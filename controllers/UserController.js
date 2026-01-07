@@ -1089,10 +1089,11 @@ exports.createOrder = async (req, res) => {
         order_type: delivery_dates.length > 1 ? "subscription" : "single",
         total_amount: totalAmount,
         is_paid: payment_type === "online" ? 0 : 1,
-        status: "pending",
+        status: payment_type === "online" ? "pending" : "active",
         created_at: req.locals.now
       }
     );
+
 
     if (!order_id) {
       throw new Error("Order not created");
