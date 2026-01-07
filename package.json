@@ -36,6 +36,7 @@
     "node-cron": "^4.1.0",
     "php-unserialize": "0.0.1",
     "pusher": "^5.2.0",
+    "razorpay": "^2.9.6",
     "socket.io": "^4.8.1",
     "underscore": "^1.13.1",
     "underscore.string": "^3.3.5",
