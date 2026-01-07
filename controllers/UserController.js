@@ -1021,16 +1021,16 @@ exports.deleteCart = async (req, res) => {
 exports.createOrder = async (req, res) => {
   try {
     const user_id = req.userInfo.user_id;
-    const { address_id, slot, delivery_dates, payment_type } = req.body.inputdata;
+    const { address_id, slot, delivery_dates } = req.body.inputdata;
 
-    if (!delivery_dates?.length) {
+    if (!delivery_dates || !delivery_dates.length) {
       return utility.apiResponse(req, res, {
         status: "error",
         msg: "Delivery dates required"
       });
     }
 
-    // 🛒 CART
+    // 🔹 Fetch cart
     const cartItems = await dbQuery.rawQuery(
       constants.vals.defaultDB,
       `SELECT * FROM user_cart WHERE user_id=${user_id}`
@@ -1039,18 +1039,19 @@ exports.createOrder = async (req, res) => {
     if (!cartItems.length) {
       return utility.apiResponse(req, res, {
         status: "error",
-        msg: "Cart empty"
+        msg: "Cart is empty"
       });
     }
 
-    let totalAmount = cartItems.reduce(
-      (s, c) => s + Number(c.total_price),
-      0
-    );
+    // 🔹 Calculate total
+    let totalAmount = 0;
+    cartItems.forEach(c => {
+      totalAmount += Number(c.total_price);
+    });
 
-    totalAmount *= delivery_dates.length;
+    totalAmount = totalAmount * delivery_dates.length;
 
-    // 🧾 CREATE DB ORDER (UNPAID)
+    // 🔹 Create DB Order (IMPORTANT)
     const order_id = await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "orders",
@@ -1059,82 +1060,49 @@ exports.createOrder = async (req, res) => {
         order_type: delivery_dates.length > 1 ? "subscription" : "single",
         total_amount: totalAmount,
         is_paid: 0,
-        payment_status: "pending",
         status: "pending",
         created_at: req.locals.now
       }
     );
 
-    // 📦 ORDER ITEMS
-    for (let c of cartItems) {
-      await dbQuery.insertSingle(
-        constants.vals.defaultDB,
-        "order_items",
-        {
-          order_id,
-          meals_id: c.meal_id,
-          quantity: c.meal_quantity,
-          price: c.total_price,
-          selected_items: JSON.stringify({
-            selected_items: JSON.parse(c.selected_items || "{}"),
-            extra_items: JSON.parse(c.extra_items || "[]")
-          }),
-          created_at: req.locals.now
-        }
-      );
-    }
+    if (!order_id) throw new Error("Order not created");
 
-    // 🧹 CLEAR CART
-    await dbQuery.rawQuery(
+    // 🔹 Create Razorpay Order
+    const razorpayOrder = await razorpay.orders.create({
+      amount: totalAmount * 100,
+      currency: "INR",
+      receipt: `order_${order_id}`
+    });
+
+    // 🔹 Save Razorpay Order ID
+    await dbQuery.updateRecord(
       constants.vals.defaultDB,
-      `DELETE FROM user_cart WHERE user_id=${user_id}`
+      "orders",
+      `order_id=${order_id}`,
+      `razorpay_order_id='${razorpayOrder.id}'`
     );
 
-    // 💳 ONLINE PAYMENT → CREATE RAZORPAY ORDER
-    if (payment_type === "online") {
-
-      const razorpayOrder = await razorpay.orders.create({
-        amount: totalAmount * 100, // paise
-        currency: "INR",
-        receipt: `order_${order_id}`
-      });
-
-      // SAVE RAZORPAY ORDER ID
-      await dbQuery.updateRecord(
-        constants.vals.defaultDB,
-        "orders",
-        `order_id=${order_id}`,
-        `razorpay_order_id='${razorpayOrder.id}'`
-      );
-
-      return utility.apiResponse(req, res, {
-        status: "success",
-        msg: "Order created. Proceed to payment",
-        data: {
-          order_id,
-          razorpay_order_id: razorpayOrder.id,
-          amount: totalAmount,
-          currency: "INR",
-          razorpay_key: "rzp_test_S0ysEwOgi9ZKUb"
-        }
-      });
-    }
-
-    // 💰 PAY LATER
     return utility.apiResponse(req, res, {
       status: "success",
-      msg: "Order placed (Pay later)",
-      data: { order_id, totalAmount }
+      msg: "Order created",
+      data: {
+        order_id,
+        razorpay_order_id: razorpayOrder.id,
+        amount: totalAmount,
+        currency: "INR",
+        key: "rzp_test_S0ysEwOgi9ZKUb"
+      }
     });
 
   } catch (err) {
     console.error("CREATE ORDER ERROR", err);
     return res.status(500).json({
       status: "error",
-      msg: "Internal error"
+      msg: "Internal server error"
     });
   }
 };
+
 
 
 
