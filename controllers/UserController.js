@@ -626,11 +626,7 @@ exports.listUserAddresses = async (req, res) => {
 exports.addToCart = async (req, res) => {
   try {
     const body = req.body.inputdata || {};
-
-    // ✅ ONLY logged-in user
     const user_id = req.userInfo?.user_id;
-
-    console.log("ADD CART USER ID:", user_id);
 
     if (!user_id) {
       return utility.apiResponse(req, res, {
@@ -639,41 +635,53 @@ exports.addToCart = async (req, res) => {
       });
     }
 
-    if (!body.meal_id && (!body.extra_items || body.extra_items.length === 0)) {
+    if (!body.meal_id) {
       return utility.apiResponse(req, res, {
         status: "error",
-        msg: "Meal or Extra items required"
+        msg: "Meal required"
       });
     }
 
-    const pick = (r) => Array.isArray(r) ? r[0] : r;
+    const pick = r => Array.isArray(r) ? r[0] : r;
 
-    let mealPrice = 0;
+    // --------------------------------------------------
+    // FETCH MEAL
+    // --------------------------------------------------
+    const meal = pick(await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "meals",
+      `WHERE meals_id=${body.meal_id}`,
+      "meals_id, price, is_special_meal"
+    ));
 
-    if (body.meal_id) {
-      const meal = pick(await dbQuery.fetchSingleRecord(
-        constants.vals.defaultDB,
-        "meals",
-        `WHERE meals_id=${body.meal_id}`,
-        "meals_id, price"
-      ));
-
-      if (!meal) {
-        return utility.apiResponse(req, res, {
-          status: "error",
-          msg: "Meal not found"
-        });
-      }
-
-      mealPrice = Number(meal.price) * Number(body.meal_quantity || 1);
+    if (!meal) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Meal not found"
+      });
     }
 
+    const mealQty = Number(body.meal_quantity || 1);
+    let mealPrice = Number(meal.price) * mealQty;
+
+    // --------------------------------------------------
+    // 🚫 BLOCK EXTRA ITEMS FOR SPECIAL MEALS
+    // --------------------------------------------------
+    if (meal.is_special_meal == 1 && body.extra_items?.length > 0) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Extra items not allowed for special meals"
+      });
+    }
+
+    // --------------------------------------------------
+    // EXTRA ITEMS (ONLY FOR NORMAL MEAL)
+    // --------------------------------------------------
     let extraItems = [];
     let extraTotal = 0;
 
-    if (Array.isArray(body.extra_items)) {
+    if (meal.is_special_meal == 0 && Array.isArray(body.extra_items)) {
       for (let ex of body.extra_items) {
-
         let item = null;
         let type = null;
 
@@ -712,15 +720,21 @@ exports.addToCart = async (req, res) => {
       }
     }
 
+    // --------------------------------------------------
+    // FINAL TOTAL
+    // --------------------------------------------------
     const finalTotal = mealPrice + extraTotal;
 
+    // --------------------------------------------------
+    // SAVE CART
+    // --------------------------------------------------
     const cartID = await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "user_cart",
       {
         user_id,
         meal_id: body.meal_id,
-        meal_quantity: body.meal_quantity || 1,
+        meal_quantity: mealQty,
         selected_items: JSON.stringify(body.selected_items || {}),
         extra_items: JSON.stringify(extraItems),
         total_price: finalTotal,
@@ -731,7 +745,7 @@ exports.addToCart = async (req, res) => {
 
     return utility.apiResponse(req, res, {
       status: "success",
-      msg: "Item added",
+      msg: "Item added to cart",
       data: {
         cart_id: cartID,
         total_price: finalTotal
@@ -742,10 +756,11 @@ exports.addToCart = async (req, res) => {
     console.error("ADD CART ERROR", err);
     return res.status(500).json({
       status: "error",
-      msg: "Internal error"
+      msg: "Internal server error"
     });
   }
 };
+
 
 
 
@@ -760,7 +775,6 @@ exports.getCart = async (req, res) => {
       });
     }
 
-    // 1️⃣ Fetch cart items
     const cartList = await dbQuery.rawQuery(
       constants.vals.defaultDB,
       `SELECT * FROM user_cart WHERE user_id=${user_id} ORDER BY cart_id DESC`
@@ -770,68 +784,52 @@ exports.getCart = async (req, res) => {
 
     for (let c of cartList) {
 
-      // --------------------------------
-      // Parse stored JSON
-      // --------------------------------
       const selected = JSON.parse(c.selected_items || "{}");
       const extras = JSON.parse(c.extra_items || "[]");
 
-      // --------------------------------
-      // Fetch meal
-      // --------------------------------
+      // --------------------------------------------------
+      // MEAL
+      // --------------------------------------------------
       const meal = await dbQuery.fetchSingleRecord(
         constants.vals.defaultDB,
         "meals",
         `WHERE meals_id=${c.meal_id}`,
-        `
-          meals_id,
-          meals_name,
-          price,
-          bread_count,
-          subji_count,
-          other_count,
-          is_special_meal,
-          special_item_id
-        `
+        "meals_id, meals_name, price, bread_count, subji_count, other_count, is_special_meal"
       );
 
-      if (!meal) continue;
-
-      // --------------------------------
-      // Selected Bread (NORMAL MEAL)
-      // --------------------------------
+      // --------------------------------------------------
+      // SELECTED ITEMS
+      // --------------------------------------------------
       let bread = null;
-      if (selected.bread_id) {
-        bread = await dbQuery.fetchSingleRecord(
-          constants.vals.defaultDB,
-          "breads",
-          `WHERE bread_id=${selected.bread_id}`,
-          "bread_id, name, price"
-        );
-      }
-
-      // --------------------------------
-      // Selected Subjis (NORMAL MEAL)
-      // --------------------------------
       let subjis = [];
-      if (Array.isArray(selected.subji_ids)) {
-        for (let sid of selected.subji_ids) {
-          const row = await dbQuery.fetchSingleRecord(
+      let specialItem = null;
+
+      if (meal.is_special_meal == 0) {
+        if (selected.bread_id) {
+          bread = await dbQuery.fetchSingleRecord(
             constants.vals.defaultDB,
-            "subjis",
-            `WHERE subji_id=${sid}`,
-            "subji_id, name, price"
+            "breads",
+            `WHERE bread_id=${selected.bread_id}`,
+            "bread_id, name, price"
           );
-          if (row) subjis.push(row);
+        }
+
+        if (Array.isArray(selected.subji_ids)) {
+          for (let sid of selected.subji_ids) {
+            const row = await dbQuery.fetchSingleRecord(
+              constants.vals.defaultDB,
+              "subjis",
+              `WHERE subji_id=${sid}`,
+              "subji_id, name, price"
+            );
+            if (row) subjis.push(row);
+          }
         }
       }
 
-      // --------------------------------
-      // Selected Special Item (SPECIAL MEAL)
-      // --------------------------------
-      let selectedSpecialItem = null;
-      if (selected.special_item_id) {
-        selectedSpecialItem = await dbQuery.fetchSingleRecord(
+      // SPECIAL ITEM
+      if (meal.is_special_meal == 1 && selected.special_item_id) {
+        specialItem = await dbQuery.fetchSingleRecord(
           constants.vals.defaultDB,
           "special_items",
           `WHERE special_item_id=${selected.special_item_id}`,
@@ -839,56 +837,49 @@ exports.getCart = async (req, res) => {
         );
       }
 
-      // --------------------------------
-      // Extra Items (bread / subji / special)
-      // --------------------------------
+      // --------------------------------------------------
+      // EXTRA ITEMS (ONLY FOR NORMAL MEAL)
+      // --------------------------------------------------
       let extraItems = [];
 
-      for (let ex of extras) {
-        let item = null;
+      if (meal.is_special_meal == 0) {
+        for (let ex of extras) {
+          let item = null;
 
-        if (ex.item_type === "bread") {
-          item = await dbQuery.fetchSingleRecord(
-            constants.vals.defaultDB,
-            "breads",
-            `WHERE bread_id=${ex.item_id}`,
-            "bread_id AS id, name, price"
-          );
+          if (ex.item_type === "bread") {
+            item = await dbQuery.fetchSingleRecord(
+              constants.vals.defaultDB,
+              "breads",
+              `WHERE bread_id=${ex.item_id}`,
+              "bread_id AS id, name, price"
+            );
+          }
+
+          if (ex.item_type === "subji") {
+            item = await dbQuery.fetchSingleRecord(
+              constants.vals.defaultDB,
+              "subjis",
+              `WHERE subji_id=${ex.item_id}`,
+              "subji_id AS id, name, price"
+            );
+          }
+
+          if (!item) continue;
+
+          extraItems.push({
+            item_id: item.id,
+            item_type: ex.item_type,
+            name: item.name,
+            price: item.price,
+            quantity: ex.quantity,
+            subtotal: ex.subtotal
+          });
         }
-
-        else if (ex.item_type === "subji") {
-          item = await dbQuery.fetchSingleRecord(
-            constants.vals.defaultDB,
-            "subjis",
-            `WHERE subji_id=${ex.item_id}`,
-            "subji_id AS id, name, price"
-          );
-        }
-
-        else if (ex.item_type === "special") {
-          item = await dbQuery.fetchSingleRecord(
-            constants.vals.defaultDB,
-            "special_items",
-            `WHERE special_item_id=${ex.item_id}`,
-            "special_item_id AS id, name, price"
-          );
-        }
-
-        if (!item) continue;
-
-        extraItems.push({
-          item_id: item.id,
-          item_type: ex.item_type,
-          name: item.name,
-          price: item.price,
-          quantity: ex.quantity,
-          subtotal: ex.subtotal
-        });
       }
 
-      // --------------------------------
-      // Final Cart Object
-      // --------------------------------
+      // --------------------------------------------------
+      // FINAL CART OBJECT
+      // --------------------------------------------------
       finalCart.push({
         cart_id: c.cart_id,
         total_price: c.total_price,
@@ -910,7 +901,7 @@ exports.getCart = async (req, res) => {
         selected_items: {
           bread,
           subjis,
-          special_item: selectedSpecialItem
+          special_item: specialItem
         },
 
         extra_items: extraItems
@@ -931,6 +922,7 @@ exports.getCart = async (req, res) => {
     });
   }
 };
+
 
 
 
