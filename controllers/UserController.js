@@ -319,10 +319,19 @@ exports.getUserProfile = async (req, res) => {
 
 exports.userGetMeals = async (req, res) => {
   try {
-    // Only show active & not deleted meals to user
     const condition = "WHERE is_delete = 0 AND is_active = 1";
-    const fields =
-      "meals_id, meals_name, price, description, bread_count, subji_count, other_count, is_special_meal, special_item_id, created_at";
+    const fields = `
+      meals_id,
+      meals_name,
+      price,
+      description,
+      bread_count,
+      subji_count,
+      other_count,
+      is_special_meal,
+      special_item_id,
+      created_at
+    `;
 
     const meals = await dbQuery.fetchRecords(
       constants.vals.defaultDB,
@@ -331,18 +340,46 @@ exports.userGetMeals = async (req, res) => {
       fields
     );
 
-    // Add selection status
-    const finalMeals = meals.map(meal => ({
-      ...meal,
-      selection_rules: {
-        allow_subji: meal.subji_count > 0,
-        subji_count: meal.subji_count,
-        allow_bread: meal.bread_count > 0,
-        bread_count: meal.bread_count,
-        allow_other_items: meal.other_count > 0,
-        other_count: meal.other_count
+    const finalMeals = meals.map(meal => {
+
+      // ✅ SPECIAL MEAL RULES
+      if (meal.is_special_meal == 1) {
+        return {
+          ...meal,
+          selection_rules: {
+            meal_type: "special",
+            allow_special_item: true,
+            special_item_required: true,
+
+            allow_bread: false,
+            bread_count: 0,
+
+            allow_subji: false,
+            subji_count: 0,
+
+            allow_other_items: false,
+            other_count: 0
+          }
+        };
       }
-    }));
+
+      // ✅ NORMAL MEAL RULES
+      return {
+        ...meal,
+        selection_rules: {
+          meal_type: "normal",
+
+          allow_bread: meal.bread_count > 0,
+          bread_count: meal.bread_count,
+
+          allow_subji: meal.subji_count > 0,
+          subji_count: meal.subji_count,
+
+          allow_other_items: meal.other_count > 0,
+          other_count: meal.other_count
+        }
+      };
+    });
 
     return utility.apiResponse(req, res, {
       status: "success",
@@ -352,9 +389,13 @@ exports.userGetMeals = async (req, res) => {
 
   } catch (error) {
     console.error("Get Meals Error:", error);
-    return res.status(500).json({ status: "error", msg: "Internal server error" });
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
   }
 };
+
 
 exports.userGetSubjiList = async (req, res) => {
   try {
