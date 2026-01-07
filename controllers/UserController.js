@@ -10,7 +10,7 @@ const moment = require('moment-timezone');
 const { log } = require('console');
 const axios = require("axios");
 const FIREBASE_API_KEY = "AIzaSyDVPHjZwCXmiMVUps0MucNzYko9a-AGcWQ";
-const razorpay = require("../config/razorpay");
+const razorpay = require("../helpers/razorpay");
 const crypto = require("crypto");
 
 // tifin api start
