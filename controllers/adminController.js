@@ -232,9 +232,16 @@ exports.getMeals = async (req, res) => {
       `
     );
 
+    const normalizeJSON = (val) => {
+      if (!val) return [];
+      if (typeof val === "string") return JSON.parse(val);
+      if (typeof val === "object") return val;
+      return [];
+    };
+
     const formatted = meals.map(m => ({
       ...m,
-      bread_config: m.bread_config ? JSON.parse(m.bread_config) : []
+      bread_config: normalizeJSON(m.bread_config)
     }));
 
     return utility.apiResponse(req, res, {
@@ -251,6 +258,7 @@ exports.getMeals = async (req, res) => {
     });
   }
 };
+
 
 
 
