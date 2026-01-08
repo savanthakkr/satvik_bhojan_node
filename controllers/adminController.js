@@ -1631,6 +1631,12 @@ exports.getPendingPayments = async (req, res) => {
 
 exports.adminGetUsers = async (req, res) => {
   try {
+    const { pay_later } = req.query; // 1 or 0
+
+    let where = `u.is_delete=0`;
+    if (pay_later === "1") where += ` AND u.allow_pay_later=1`;
+    if (pay_later === "0") where += ` AND u.allow_pay_later=0`;
+
     const rows = await dbQuery.rawQuery(
       constants.vals.defaultDB,
       `
@@ -1640,6 +1646,8 @@ exports.adminGetUsers = async (req, res) => {
         u.email,
         u.mobile_no,
         u.is_active,
+        u.allow_pay_later,
+        u.pay_later_limit,
         u.created_at,
 
         COUNT(DISTINCT o.order_id) AS total_orders,
@@ -1656,7 +1664,7 @@ exports.adminGetUsers = async (req, res) => {
       FROM users u
       LEFT JOIN orders o ON o.user_id=u.user_id
       LEFT JOIN wallet_transactions wt ON wt.user_id=u.user_id
-      WHERE u.is_delete=0
+      WHERE ${where}
       GROUP BY u.user_id
       ORDER BY u.user_id DESC
       `
@@ -1673,6 +1681,7 @@ exports.adminGetUsers = async (req, res) => {
     res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
+
 
 exports.adminUserDetails = async (req, res) => {
   try {
@@ -1834,6 +1843,80 @@ exports.adminUserOrderHistory = async (req, res) => {
 };
 
 
+exports.setPayLaterAccess = async (req, res) => {
+  try {
+    const body = req.body.inputdata || {};
+    const {
+      apply_for,
+      user_ids = [],
+      user_id,
+      allow_pay_later,
+      pay_later_limit
+    } = body;
+
+    if (!["all", "single", "multiple"].includes(apply_for)) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Invalid apply_for value"
+      });
+    }
+
+    if (allow_pay_later !== 0 && allow_pay_later !== 1) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "allow_pay_later must be 0 or 1"
+      });
+    }
+
+    let where = "";
+
+    if (apply_for === "single") {
+      if (!user_id) {
+        return utility.apiResponse(req, res, {
+          status: "error",
+          msg: "user_id required"
+        });
+      }
+      where = `user_id=${user_id}`;
+    }
+
+    if (apply_for === "multiple") {
+      if (!Array.isArray(user_ids) || !user_ids.length) {
+        return utility.apiResponse(req, res, {
+          status: "error",
+          msg: "user_ids required"
+        });
+      }
+      where = `user_id IN (${user_ids.join(",")})`;
+    }
+
+    if (apply_for === "all") {
+      where = "1=1";
+    }
+
+    await dbQuery.updateRecord(
+      constants.vals.defaultDB,
+      "users",
+      where,
+      `
+        allow_pay_later=${allow_pay_later},
+        pay_later_limit=${pay_later_limit ?? null}
+      `
+    );
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Pay Later access updated successfully"
+    });
+
+  } catch (err) {
+    console.error("SET PAY LATER ERROR", err);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
+  }
+};
 
 
 exports.adminSendPendingPaymentNotification = async (req, res) => {

@@ -1,12 +1,17 @@
 var express = require("express");
 var apiMiddleware = require("../middlewares/api");
-const {getAdminDashboardStats,adminSendPendingPaymentNotification,adminSendMenuUpdateNotification,adminUserOrderHistory,adminUserDetails,adminGetUsers,adminLogin,addMeal,getKitchenSummary,getPendingPayments,getAdminDailyOrders,adminSettlePayment,getAllOrders,toggleOtherItemStatus,deleteOtherItem,editOtherItem,getOtherItem,addOtherItem,toggleSpecialItemStatus,toggleSubjiStatus,toggleBreadStatus,toggleMealStatus,addMealStructure,addBread,getBread,editBread,deleteBread,addSubji,getSubji,editSubji,deleteSubji,addSpecialItem,getSpecialItems,editSpecialItem,deleteSpecialItem,getMeals,editMeal,deleteMeal,adminGetProfile } = require("../controllers/adminController");
+const {setPayLaterAccess,getAdminDashboardStats,adminSendPendingPaymentNotification,adminSendMenuUpdateNotification,adminUserOrderHistory,adminUserDetails,adminGetUsers,adminLogin,addMeal,getKitchenSummary,getPendingPayments,getAdminDailyOrders,adminSettlePayment,getAllOrders,toggleOtherItemStatus,deleteOtherItem,editOtherItem,getOtherItem,addOtherItem,toggleSpecialItemStatus,toggleSubjiStatus,toggleBreadStatus,toggleMealStatus,addMealStructure,addBread,getBread,editBread,deleteBread,addSubji,getSubji,editSubji,deleteSubji,addSpecialItem,getSpecialItems,editSpecialItem,deleteSpecialItem,getMeals,editMeal,deleteMeal,adminGetProfile } = require("../controllers/adminController");
 const { adminAuthentication } = require('../middlewares/authentication');
 const FileManager = require("../helpers/file_manager");
 var app = express();
 
 // Login
 app.use("/login", apiMiddleware, adminLogin);
+
+
+
+//
+app.use("/set_pay_later_access", apiMiddleware, adminAuthentication, setPayLaterAccess);
 
 
 //
