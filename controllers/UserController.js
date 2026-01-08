@@ -1052,6 +1052,7 @@ exports.createOrder = async (req, res) => {
     totalAmount *= delivery_dates.length;
 
     /* CREATE ORDER */
+    /* CREATE ORDER */
     const order_id = await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "orders",
@@ -1059,12 +1060,13 @@ exports.createOrder = async (req, res) => {
         user_id,
         order_type: delivery_dates.length > 1 ? "subscription" : "single",
         total_amount: totalAmount,
-        is_paid: 0,
-        status: payment_type === "online" ? "pending" : "active",
-        payment_type,
+        is_paid: payment_type === "online" ? 0 : 0, // always 0 initially
+        payment_type,                               // 'online' | 'later'
+        status: "active",                           // ✅ ALWAYS ACTIVE
         created_at: req.locals.now
       }
     );
+
 
     /* ORDER ITEMS + SCHEDULE */
     for (let c of cartItems) {
