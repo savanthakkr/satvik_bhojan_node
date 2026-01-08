@@ -1649,6 +1649,7 @@ exports.adminGetUsers = async (req, res) => {
         u.is_active,
         u.allow_pay_later,
         u.pay_later_limit,
+        u.created_at,
 
         COUNT(DISTINCT o.order_id) AS total_orders,
 
@@ -1681,6 +1682,8 @@ exports.adminGetUsers = async (req, res) => {
     res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
+
+
 
 
 
