@@ -1265,24 +1265,16 @@ exports.updateCart = async (req, res) => {
     const user_id = req.userInfo?.user_id;
 
     if (!user_id) {
-      return utility.apiResponse(req, res, {
-        status: "error",
-        msg: "Unauthorized"
-      });
+      return utility.apiResponse(req, res, { status: "error", msg: "Unauthorized" });
     }
 
     if (!body.cart_id) {
-      return utility.apiResponse(req, res, {
-        status: "error",
-        msg: "Cart ID required"
-      });
+      return utility.apiResponse(req, res, { status: "error", msg: "Cart ID required" });
     }
 
-    const pick = (r) => Array.isArray(r) ? r[0] : r;
+    const pick = r => Array.isArray(r) ? r[0] : r;
 
-    // --------------------------------------------------
-    // 1️⃣ FETCH EXISTING CART
-    // --------------------------------------------------
+    /* ---------------- FETCH CART ---------------- */
     const cart = pick(await dbQuery.fetchSingleRecord(
       constants.vals.defaultDB,
       "user_cart",
@@ -1291,71 +1283,81 @@ exports.updateCart = async (req, res) => {
     ));
 
     if (!cart) {
-      return utility.apiResponse(req, res, {
-        status: "error",
-        msg: "Cart not found"
-      });
+      return utility.apiResponse(req, res, { status: "error", msg: "Cart not found" });
     }
 
-    // --------------------------------------------------
-    // 2️⃣ MEAL PRICE
-    // --------------------------------------------------
-    let mealPrice = 0;
-    let mealQty = body.meal_quantity || cart.meal_quantity || 1;
+    /* ---------------- FETCH MEAL ---------------- */
+    const meal = pick(await dbQuery.fetchSingleRecord(
+      constants.vals.defaultDB,
+      "meals",
+      `WHERE meals_id=${cart.meal_id}`,
+      "meals_id, price, is_special_meal"
+    ));
 
-    if (cart.meal_id) {
-      const meal = pick(await dbQuery.fetchSingleRecord(
-        constants.vals.defaultDB,
-        "meals",
-        `WHERE meals_id=${cart.meal_id}`,
-        "price"
-      ));
-
-      mealPrice = Number(meal.price) * Number(mealQty);
+    if (!meal) {
+      return utility.apiResponse(req, res, { status: "error", msg: "Meal not found" });
     }
 
-    // --------------------------------------------------
-    // 3️⃣ EXTRA ITEMS RECALCULATION
-    // --------------------------------------------------
+    /* ---------------- MEAL PRICE ---------------- */
+    const mealQty = Number(body.meal_quantity || cart.meal_quantity || 1);
+    const mealPrice = mealQty * Number(meal.price);
+
+    /* ---------------- EXTRA ITEMS ---------------- */
     let extraItems = [];
     let extraTotal = 0;
 
     if (Array.isArray(body.extra_items)) {
-
       for (let ex of body.extra_items) {
 
         let item = null;
         let type = null;
 
-        item = pick(await dbQuery.fetchSingleRecord(
-          constants.vals.defaultDB,
-          "breads",
-          `WHERE bread_id=${ex.item_id}`,
-          "bread_id AS id, price"
-        ));
-        if (item) type = "bread";
-
-        if (!item) {
-          item = pick(await dbQuery.fetchSingleRecord(
-            constants.vals.defaultDB,
-            "subjis",
-            `WHERE subji_id=${ex.item_id}`,
-            "subji_id AS id, price"
-          ));
-          if (item) type = "subji";
-        }
-
-        if (!item) {
+        /* 🔴 SPECIAL MEAL → ONLY SPECIAL ITEMS */
+        if (meal.is_special_meal == 1) {
           item = pick(await dbQuery.fetchSingleRecord(
             constants.vals.defaultDB,
             "special_items",
             `WHERE special_item_id=${ex.item_id}`,
             "special_item_id AS id, price"
           ));
-          if (item) type = "special";
+
+          if (!item) {
+            return utility.apiResponse(req, res, {
+              status: "error",
+              msg: "Only special items allowed with special meal"
+            });
+          }
+
+          type = "special";
         }
 
-        if (!item) continue;
+        /* 🟢 NORMAL MEAL → BREAD / SUBJI ONLY */
+        if (meal.is_special_meal == 0) {
+          item = pick(await dbQuery.fetchSingleRecord(
+            constants.vals.defaultDB,
+            "breads",
+            `WHERE bread_id=${ex.item_id}`,
+            "bread_id AS id, price"
+          ));
+          if (item) type = "bread";
+
+          if (!item) {
+            item = pick(await dbQuery.fetchSingleRecord(
+              constants.vals.defaultDB,
+              "subjis",
+              `WHERE subji_id=${ex.item_id}`,
+              "subji_id AS id, price"
+            ));
+            if (item) type = "subji";
+          }
+
+          if (!item) {
+            return utility.apiResponse(req, res, {
+              status: "error",
+              msg: "Special items not allowed with normal meal"
+            });
+          }
+        }
 
         const qty = Number(ex.quantity || 1);
         const subtotal = qty * Number(item.price);
@@ -1372,25 +1374,21 @@ exports.updateCart = async (req, res) => {
       }
     }
 
-    // --------------------------------------------------
-    // 4️⃣ FINAL TOTAL
-    // --------------------------------------------------
+    /* ---------------- FINAL TOTAL ---------------- */
     const finalTotal = mealPrice + extraTotal;
 
-    // --------------------------------------------------
-    // 5️⃣ UPDATE CART
-    // --------------------------------------------------
+    /* ---------------- UPDATE CART ---------------- */
     await dbQuery.updateRecord(
       constants.vals.defaultDB,
       "user_cart",
       `cart_id=${body.cart_id}`,
       `
-            meal_quantity=${mealQty},
-            selected_items='${JSON.stringify(body.selected_items || {})}',
-            extra_items='${JSON.stringify(extraItems)}',
-            total_price=${finalTotal},
-            updated_at='${req.locals.now}'
-            `
+        meal_quantity=${mealQty},
+        selected_items='${JSON.stringify(body.selected_items || {})}',
+        extra_items='${JSON.stringify(extraItems)}',
+        total_price=${finalTotal},
+        updated_at='${req.locals.now}'
+      `
     );
 
     return utility.apiResponse(req, res, {
@@ -1404,12 +1402,10 @@ exports.updateCart = async (req, res) => {
 
   } catch (err) {
     console.error("UPDATE CART ERROR", err);
-    return res.status(500).json({
-      status: "error",
-      msg: "Internal error"
-    });
+    return res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
+
 
 
 
