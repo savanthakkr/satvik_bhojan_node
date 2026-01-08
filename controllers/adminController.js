@@ -1846,13 +1846,26 @@ exports.adminUserOrderHistory = async (req, res) => {
 exports.setPayLaterAccess = async (req, res) => {
   try {
     const body = req.body.inputdata || {};
-    const {
+
+    let {
       apply_for,
       user_ids = [],
       user_id,
       allow_pay_later,
       pay_later_limit
     } = body;
+
+    /* ===============================
+       NORMALIZE VALUES
+    =============================== */
+    allow_pay_later = Number(allow_pay_later);
+
+    if (![0, 1].includes(allow_pay_later)) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "allow_pay_later must be 0 or 1"
+      });
+    }
 
     if (!["all", "single", "multiple"].includes(apply_for)) {
       return utility.apiResponse(req, res, {
@@ -1861,13 +1874,9 @@ exports.setPayLaterAccess = async (req, res) => {
       });
     }
 
-    if (allow_pay_later !== 0 && allow_pay_later !== 1) {
-      return utility.apiResponse(req, res, {
-        status: "error",
-        msg: "allow_pay_later must be 0 or 1"
-      });
-    }
-
+    /* ===============================
+       BUILD WHERE CLAUSE
+    =============================== */
     let where = "";
 
     if (apply_for === "single") {
@@ -1877,7 +1886,7 @@ exports.setPayLaterAccess = async (req, res) => {
           msg: "user_id required"
         });
       }
-      where = `user_id=${user_id}`;
+      where = `user_id=${Number(user_id)}`;
     }
 
     if (apply_for === "multiple") {
@@ -1887,20 +1896,38 @@ exports.setPayLaterAccess = async (req, res) => {
           msg: "user_ids required"
         });
       }
-      where = `user_id IN (${user_ids.join(",")})`;
+
+      const safeIds = user_ids.map(id => Number(id)).filter(Boolean);
+      where = `user_id IN (${safeIds.join(",")})`;
     }
 
     if (apply_for === "all") {
       where = "1=1";
     }
 
+    /* ===============================
+       PAY LATER LIMIT LOGIC
+    =============================== */
+    let limitValue = "NULL";
+
+    if (allow_pay_later === 1) {
+      limitValue = Number(pay_later_limit || 0);
+    }
+
+    if (allow_pay_later === 0) {
+      limitValue = 0; // ✅ FORCE RESET
+    }
+
+    /* ===============================
+       UPDATE
+    =============================== */
     await dbQuery.updateRecord(
       constants.vals.defaultDB,
       "users",
       where,
       `
         allow_pay_later=${allow_pay_later},
-        pay_later_limit=${pay_later_limit ?? null}
+        pay_later_limit=${limitValue}
       `
     );
 
@@ -1917,6 +1944,7 @@ exports.setPayLaterAccess = async (req, res) => {
     });
   }
 };
+
 
 
 exports.adminSendPendingPaymentNotification = async (req, res) => {

@@ -1023,7 +1023,10 @@ exports.createOrder = async (req, res) => {
     const { address_id, slot, delivery_dates, payment_type } = req.body.inputdata;
 
     if (!delivery_dates?.length) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Delivery dates required" });
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Delivery dates required"
+      });
     }
 
     /* SLOT CUTOFF */
@@ -1035,7 +1038,10 @@ exports.createOrder = async (req, res) => {
 
     const now = new Date().toTimeString().slice(0, 5);
     if (now > slotRow.order_cutoff) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Order time closed" });
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Order time closed"
+      });
     }
 
     /* CART */
@@ -1045,13 +1051,18 @@ exports.createOrder = async (req, res) => {
     );
 
     if (!cartItems.length) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Cart empty" });
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Cart empty"
+      });
     }
 
-    let totalAmount = cartItems.reduce((s, c) => s + Number(c.total_price), 0);
+    let totalAmount = cartItems.reduce(
+      (sum, c) => sum + Number(c.total_price),
+      0
+    );
     totalAmount *= delivery_dates.length;
 
-    /* CREATE ORDER */
     /* CREATE ORDER */
     const order_id = await dbQuery.insertSingle(
       constants.vals.defaultDB,
@@ -1060,13 +1071,12 @@ exports.createOrder = async (req, res) => {
         user_id,
         order_type: delivery_dates.length > 1 ? "subscription" : "single",
         total_amount: totalAmount,
-        is_paid: payment_type === "online" ? 0 : 0, // always 0 initially
-        payment_type,                               // 'online' | 'later'
-        status: "active",                           // ✅ ALWAYS ACTIVE
+        is_paid: 0,
+        payment_type,        // online | later
+        status: "active",    // ALWAYS ACTIVE
         created_at: req.locals.now
       }
     );
-
 
     /* ORDER ITEMS + SCHEDULE */
     for (let c of cartItems) {
@@ -1088,14 +1098,18 @@ exports.createOrder = async (req, res) => {
       );
 
       for (let date of delivery_dates) {
-        await dbQuery.insertSingle(constants.vals.defaultDB, "order_schedule", {
-          order_id,
-          order_item_id,
-          delivery_date: date,
-          slot,
-          address_id,
-          status: "scheduled"
-        });
+        await dbQuery.insertSingle(
+          constants.vals.defaultDB,
+          "order_schedule",
+          {
+            order_id,
+            order_item_id,
+            delivery_date: date,
+            slot,
+            address_id,
+            status: "scheduled"
+          }
+        );
       }
     }
 
@@ -1105,16 +1119,33 @@ exports.createOrder = async (req, res) => {
       `DELETE FROM user_cart WHERE user_id=${user_id}`
     );
 
-    /* PAY LATER */
+    /* ==========================
+       🟡 PAY LATER → ADD DEBIT
+    ========================== */
     if (payment_type === "later") {
+
+      await dbQuery.insertSingle(
+        constants.vals.defaultDB,
+        "wallet_transactions",
+        {
+          user_id,
+          order_id,
+          type: "debit",
+          amount: totalAmount,
+          description: "Order placed (Pay Later)"
+        }
+      );
+
       return utility.apiResponse(req, res, {
         status: "success",
-        msg: "Order placed successfully",
+        msg: "Order placed with Pay Later",
         data: { order_id, totalAmount }
       });
     }
 
-    /* ONLINE PAYMENT (ONLY CREATE RAZORPAY ORDER) */
+    /* ==========================
+       🔵 ONLINE PAYMENT
+    ========================== */
     const razorpayOrder = await razorpay.orders.create({
       amount: totalAmount * 100,
       currency: "INR",
@@ -1138,9 +1169,13 @@ exports.createOrder = async (req, res) => {
 
   } catch (err) {
     console.error("CREATE ORDER ERROR:", err);
-    return res.status(500).json({ status: "error", msg: "Internal server error" });
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
   }
 };
+
 
 
 
@@ -1150,7 +1185,7 @@ exports.verifyPayment = async (req, res) => {
   try {
     const user_id = req.userInfo.user_id;
     const {
-      payment_for,              // "order" | "wallet"
+      payment_for,        // "order" | "wallet"
       order_id,
       wallet_amount,
       razorpay_order_id,
@@ -1158,13 +1193,14 @@ exports.verifyPayment = async (req, res) => {
       razorpay_signature
     } = req.body.inputdata;
 
-    /* ===============================
-       1️⃣ VERIFY SIGNATURE
-    =============================== */
+    /* VERIFY SIGNATURE */
     const body = razorpay_order_id + "|" + razorpay_payment_id;
 
     const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET || "Hqbl27FSCC5em6EHEdDUhY2w")
+      .createHmac(
+        "sha256",
+        process.env.RAZORPAY_KEY_SECRET || "Hqbl27FSCC5em6EHEdDUhY2w"
+      )
       .update(body)
       .digest("hex");
 
@@ -1175,17 +1211,10 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    /* ===============================
-       2️⃣ ORDER PAYMENT
-    =============================== */
+    /* ======================
+       ORDER PAYMENT
+    ====================== */
     if (payment_for === "order") {
-
-      if (!order_id) {
-        return utility.apiResponse(req, res, {
-          status: "error",
-          msg: "Order ID required"
-        });
-      }
 
       const order = await dbQuery.fetchSingleRecord(
         constants.vals.defaultDB,
@@ -1193,21 +1222,13 @@ exports.verifyPayment = async (req, res) => {
         `WHERE order_id=${order_id} AND user_id=${user_id}`
       );
 
-      if (!order) {
-        return utility.apiResponse(req, res, {
-          status: "error",
-          msg: "Order not found"
-        });
-      }
-
-      if (order.is_paid == 1) {
+      if (!order || order.is_paid == 1) {
         return utility.apiResponse(req, res, {
           status: "success",
-          msg: "Order already paid"
+          msg: "Order already paid or not found"
         });
       }
 
-      /* INSERT PAYMENT */
       const payment_id = await dbQuery.insertSingle(
         constants.vals.defaultDB,
         "payments",
@@ -1222,7 +1243,6 @@ exports.verifyPayment = async (req, res) => {
         }
       );
 
-      /* UPDATE ORDER */
       await dbQuery.updateRecord(
         constants.vals.defaultDB,
         "orders",
@@ -1240,19 +1260,11 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    /* ===============================
-       3️⃣ WALLET PAYMENT
-    =============================== */
+    /* ======================
+       WALLET PAYMENT
+    ====================== */
     if (payment_for === "wallet") {
 
-      if (!wallet_amount || wallet_amount <= 0) {
-        return utility.apiResponse(req, res, {
-          status: "error",
-          msg: "Valid wallet amount required"
-        });
-      }
-
-      /* INSERT PAYMENT */
       await dbQuery.insertSingle(
         constants.vals.defaultDB,
         "payments",
@@ -1266,7 +1278,6 @@ exports.verifyPayment = async (req, res) => {
         }
       );
 
-      /* WALLET TRANSACTION */
       await dbQuery.insertSingle(
         constants.vals.defaultDB,
         "wallet_transactions",
@@ -1274,7 +1285,7 @@ exports.verifyPayment = async (req, res) => {
           user_id,
           type: "credit",
           amount: wallet_amount,
-          description: "Wallet top-up (Razorpay)"
+          description: "Wallet recharge (Razorpay)"
         }
       );
 
@@ -1284,22 +1295,20 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    /* ===============================
-       ❌ INVALID TYPE
-    =============================== */
     return utility.apiResponse(req, res, {
       status: "error",
       msg: "Invalid payment type"
     });
 
   } catch (err) {
-    console.error("VERIFY RAZORPAY PAYMENT ERROR:", err);
+    console.error("VERIFY PAYMENT ERROR:", err);
     return res.status(500).json({
       status: "error",
       msg: "Internal server error"
     });
   }
 };
+
 
 
 
@@ -1777,11 +1786,8 @@ exports.payWallet = async (req, res) => {
       });
     }
 
-    /* ===============================
-       CREATE RAZORPAY ORDER
-    =============================== */
     const razorpayOrder = await razorpay.orders.create({
-      amount: Number(amount) * 100,   // paise
+      amount: Number(amount) * 100,
       currency: "INR",
       receipt: `wallet_${user_id}_${Date.now()}`,
       payment_capture: 1
@@ -1808,6 +1814,7 @@ exports.payWallet = async (req, res) => {
     });
   }
 };
+
 
 
 
