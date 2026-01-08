@@ -147,114 +147,75 @@ exports.adminGetProfile = async (req, res) => {
 
 
 exports.addMeal = async (req, res) => {
-  try {
-    const body = req.body.inputdata;
+    try {
+        const body = req.body.inputdata;
+        let response = { status: "error", msg: "" };
 
-    if (!body.meals_name) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Meal name required" });
+        if (!body.meals_name) {
+            response.msg = "Meal name is required.";
+            return utility.apiResponse(req, res, response);
+        }
+        if (!body.price) {
+            response.msg = "Meal price is required.";
+            return utility.apiResponse(req, res, response);
+        }
+
+        const params = {
+            meals_name: body.meals_name,
+            price: body.price,
+            description: body.description || null,
+            bread_count: body.bread_count || 0,
+            subji_count: body.subji_count || 0,
+            other_count: body.other_count || 0,
+            is_special_meal: body.is_special_meal || 0,
+            special_item_id: body.special_item_id || null,
+            is_active: 1,
+            is_delete: 0,
+            created_at: req.locals.now
+        };
+
+        const insert = await dbQuery.insertSingle(constants.vals.defaultDB, "meals", params);
+        const mealId = insert?.insertId || insert;
+
+        response.status = "success";
+        response.msg = "Meal added successfully.";
+        response.data = { meal_id: mealId };
+
+        return utility.apiResponse(req, res, response);
     }
-
-    if (!body.price) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Meal price required" });
+    catch (error) {
+        console.error("Add Meal Error:", error);
+        return res.status(500).json({ status: "error", msg: "Internal server error" });
     }
-
-    /* 🔹 VALIDATE bread_config */
-    let breadConfig = null;
-
-    if (Array.isArray(body.bread_config)) {
-      breadConfig = JSON.stringify(body.bread_config); // ✅ IMPORTANT
-    }
-
-    const params = {
-      meals_name: body.meals_name,
-      price: body.price,
-      description: body.description || null,
-      bread_count: body.bread_count || 0,
-      bread_config: breadConfig,   // ✅ ALWAYS STRING
-      subji_count: body.subji_count || 0,
-      other_count: body.other_count || 0,
-      is_special_meal: body.is_special_meal || 0,
-      special_item_id: body.special_item_id || null,
-      is_active: 1,
-      is_delete: 0,
-      created_at: req.locals.now
-    };
-
-    const mealId = await dbQuery.insertSingle(
-      constants.vals.defaultDB,
-      "meals",
-      params
-    );
-
-    return utility.apiResponse(req, res, {
-      status: "success",
-      msg: "Meal added successfully",
-      data: { meal_id: mealId }
-    });
-
-  } catch (err) {
-    console.error("ADD MEAL ERROR", err);
-    return res.status(500).json({ status: "error", msg: "Internal error" });
-  }
 };
-
-
 
 
 
 
 exports.getMeals = async (req, res) => {
-  try {
-    const meals = await dbQuery.rawQuery(
-      constants.vals.defaultDB,
-      `
-      SELECT 
-        meals_id,
-        meals_name,
-        price,
-        description,
-        bread_count,
-        bread_config,
-        subji_count,
-        other_count,
-        is_special_meal,
-        special_item_id,
-        is_active
-      FROM meals
-      WHERE is_delete=0
-      `
-    );
+    try {
+        const condition = "WHERE is_delete = 0";
+        const fields =
+            "meals_id, meals_name, price, description, bread_count, subji_count, other_count, is_special_meal, special_item_id, is_active, created_at";
 
-    const formatted = meals.map(m => {
-      let breadConfig = [];
+        const meals = await dbQuery.fetchRecords(
+            constants.vals.defaultDB,
+            "meals",
+            condition,
+            fields
+        );
 
-      try {
-        if (m.bread_config) {
-          breadConfig = JSON.parse(m.bread_config);
-        }
-      } catch (e) {
-        breadConfig = []; // ✅ FAIL SAFE
-      }
+        return utility.apiResponse(req, res, {
+            status: "success",
+            msg: "Meals fetched successfully.",
+            data: meals
+        });
 
-      return {
-        ...m,
-        bread_config: breadConfig
-      };
-    });
-
-    return utility.apiResponse(req, res, {
-      status: "success",
-      msg: "Meals fetched",
-      data: formatted
-    });
-
-  } catch (err) {
-    console.error("GET MEALS ERROR", err);
-    return res.status(500).json({ status: "error", msg: "Internal error" });
-  }
+    } catch (error) {
+        console.error("Get Meals Error:", error);
+        return res.status(500).json({ status: "error", msg: "Internal server error" });
+    }
 };
-
-
 
 
 
