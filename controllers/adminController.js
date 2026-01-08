@@ -1308,6 +1308,13 @@ exports.adminSettlePayment = async (req, res) => {
 
 
 
+const normalizeJSON = (val) => {
+  if (!val) return [];
+  if (typeof val === "string") return JSON.parse(val);
+  if (typeof val === "object") return val;
+  return [];
+};
+
 exports.getKitchenSummary = async (req, res) => {
   try {
     const { date, slot } = req.query;
@@ -1339,9 +1346,9 @@ exports.getKitchenSummary = async (req, res) => {
     );
 
     const summary = {
-      meals: {},   // meal-wise count
-      bread: {},   // bread_id => qty
-      subji: {}    // subji_id => qty
+      meal: {},
+      bread: {},
+      subji: {}
     };
 
     for (let r of rows) {
@@ -1350,11 +1357,15 @@ exports.getKitchenSummary = async (req, res) => {
       const extras = parsed.extra_items || [];
       const mealQty = Number(r.meal_qty || 1);
 
-      /* 🍱 MEAL COUNT */
-      summary.meals[r.meals_id] =
-        (summary.meals[r.meals_id] || 0) + mealQty;
+      /* =========================
+         🍱 MEAL COUNT
+      ========================= */
+      summary.meal[r.meals_id] =
+        (summary.meal[r.meals_id] || 0) + mealQty;
 
-      /* 🍞 BREAD COUNT (FROM bread_config) */
+      /* =========================
+         🍞 MEAL BREAD COUNT
+      ========================= */
       if (selected.bread_id && r.bread_config) {
         const breadConfig = normalizeJSON(r.bread_config);
 
@@ -1370,10 +1381,14 @@ exports.getKitchenSummary = async (req, res) => {
         }
       }
 
-      /* 🥗 SUBJI COUNT */
+      /* =========================
+         🥗 MEAL SUBJI COUNT
+      ========================= */
       if (Array.isArray(selected.subji_ids) && selected.subji_ids.length) {
-        const perSubji =
-          Number(r.subji_count || 0) * mealQty / selected.subji_ids.length;
+        const totalSubji =
+          Number(r.subji_count || 0) * mealQty;
+
+        const perSubji = totalSubji / selected.subji_ids.length;
 
         for (let sid of selected.subji_ids) {
           summary.subji[sid] =
@@ -1381,35 +1396,46 @@ exports.getKitchenSummary = async (req, res) => {
         }
       }
 
-      /* ➕ EXTRA ITEMS */
+      /* =========================
+         ➕ EXTRA ITEMS (BREAD / SUBJI)
+      ========================= */
       for (let ex of extras) {
-        if (!summary[ex.item_type]) continue;
+        if (ex.item_type === "bread") {
+          summary.bread[ex.item_id] =
+            (summary.bread[ex.item_id] || 0) +
+            Number(ex.quantity || 0);
+        }
 
-        summary[ex.item_type][ex.item_id] =
-          (summary[ex.item_type][ex.item_id] || 0) +
-          Number(ex.quantity || 0);
+        if (ex.item_type === "subji") {
+          summary.subji[ex.item_id] =
+            (summary.subji[ex.item_id] || 0) +
+            Number(ex.quantity || 0);
+        }
       }
     }
 
-    /* 🔄 RESOLVE NAMES */
+    /* =========================
+       🔄 RESOLVE NAMES
+    ========================= */
     const result = [];
 
-    for (let mealId in summary.meals) {
+    // Meals
+    for (let id in summary.meal) {
       const m = await dbQuery.fetchSingleRecord(
         constants.vals.defaultDB,
         "meals",
-        `WHERE meals_id=${mealId}`,
+        `WHERE meals_id=${id}`,
         "meals_name"
       );
-
       result.push({
         type: "meal",
-        id: mealId,
+        id,
         name: m.meals_name,
-        total_qty: summary.meals[mealId]
+        total_qty: summary.meal[id]
       });
     }
 
+    // Breads
     for (let id in summary.bread) {
       const b = await dbQuery.fetchSingleRecord(
         constants.vals.defaultDB,
@@ -1425,6 +1451,7 @@ exports.getKitchenSummary = async (req, res) => {
       });
     }
 
+    // Subjis
     for (let id in summary.subji) {
       const s = await dbQuery.fetchSingleRecord(
         constants.vals.defaultDB,
@@ -1448,9 +1475,13 @@ exports.getKitchenSummary = async (req, res) => {
 
   } catch (err) {
     console.error("KITCHEN SUMMARY ERROR", err);
-    res.status(500).json({ status: "error", msg: "Internal error" });
+    res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
   }
 };
+
 
 
 
