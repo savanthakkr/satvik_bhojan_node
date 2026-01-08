@@ -147,75 +147,111 @@ exports.adminGetProfile = async (req, res) => {
 
 
 exports.addMeal = async (req, res) => {
-    try {
-        const body = req.body.inputdata;
-        let response = { status: "error", msg: "" };
+  try {
+    const body = req.body.inputdata;
 
-        if (!body.meals_name) {
-            response.msg = "Meal name is required.";
-            return utility.apiResponse(req, res, response);
-        }
-        if (!body.price) {
-            response.msg = "Meal price is required.";
-            return utility.apiResponse(req, res, response);
-        }
-
-        const params = {
-            meals_name: body.meals_name,
-            price: body.price,
-            description: body.description || null,
-            bread_count: body.bread_count || 0,
-            subji_count: body.subji_count || 0,
-            other_count: body.other_count || 0,
-            is_special_meal: body.is_special_meal || 0,
-            special_item_id: body.special_item_id || null,
-            is_active: 1,
-            is_delete: 0,
-            created_at: req.locals.now
-        };
-
-        const insert = await dbQuery.insertSingle(constants.vals.defaultDB, "meals", params);
-        const mealId = insert?.insertId || insert;
-
-        response.status = "success";
-        response.msg = "Meal added successfully.";
-        response.data = { meal_id: mealId };
-
-        return utility.apiResponse(req, res, response);
+    if (!body.meals_name) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Meal name required"
+      });
     }
-    catch (error) {
-        console.error("Add Meal Error:", error);
-        return res.status(500).json({ status: "error", msg: "Internal server error" });
+
+    if (!body.price) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Meal price required"
+      });
     }
+
+    let breadConfig = null;
+
+    if (Array.isArray(body.bread_config)) {
+      breadConfig = JSON.stringify(body.bread_config); // ✅ STORE JSON STRING
+    }
+
+    const params = {
+      meals_name: body.meals_name,
+      price: body.price,
+      description: body.description || null,
+      bread_count: body.bread_count || 0, // optional
+      bread_config: breadConfig,
+      subji_count: body.subji_count || 0,
+      other_count: body.other_count || 0,
+      is_special_meal: body.is_special_meal || 0,
+      special_item_id: body.special_item_id || null,
+      is_active: 1,
+      is_delete: 0,
+      created_at: req.locals.now
+    };
+
+    const mealId = await dbQuery.insertSingle(
+      constants.vals.defaultDB,
+      "meals",
+      params
+    );
+
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Meal added successfully",
+      data: { meal_id: mealId }
+    });
+
+  } catch (err) {
+    console.error("ADD MEAL ERROR", err);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal error"
+    });
+  }
 };
+
 
 
 
 
 exports.getMeals = async (req, res) => {
-    try {
-        const condition = "WHERE is_delete = 0";
-        const fields =
-            "meals_id, meals_name, price, description, bread_count, subji_count, other_count, is_special_meal, special_item_id, is_active, created_at";
+  try {
+    const meals = await dbQuery.rawQuery(
+      constants.vals.defaultDB,
+      `
+      SELECT 
+        meals_id,
+        meals_name,
+        price,
+        description,
+        bread_count,
+        bread_config,
+        subji_count,
+        other_count,
+        is_special_meal,
+        special_item_id,
+        is_active
+      FROM meals
+      WHERE is_delete=0 AND is_active=1
+      `
+    );
 
-        const meals = await dbQuery.fetchRecords(
-            constants.vals.defaultDB,
-            "meals",
-            condition,
-            fields
-        );
+    const formatted = meals.map(m => ({
+      ...m,
+      bread_config: m.bread_config ? JSON.parse(m.bread_config) : []
+    }));
 
-        return utility.apiResponse(req, res, {
-            status: "success",
-            msg: "Meals fetched successfully.",
-            data: meals
-        });
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Meals fetched",
+      data: formatted
+    });
 
-    } catch (error) {
-        console.error("Get Meals Error:", error);
-        return res.status(500).json({ status: "error", msg: "Internal server error" });
-    }
+  } catch (err) {
+    console.error("GET MEALS ERROR", err);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal error"
+    });
+  }
 };
+
 
 
 
@@ -1281,7 +1317,7 @@ exports.getKitchenSummary = async (req, res) => {
       SELECT 
         oi.selected_items,
         oi.quantity AS meal_qty,
-        m.bread_count,
+        m.bread_config,
         m.subji_count
       FROM order_schedule os
       JOIN orders o ON o.order_id=os.order_id AND o.status='active'
@@ -1301,28 +1337,28 @@ exports.getKitchenSummary = async (req, res) => {
       const parsed = JSON.parse(r.selected_items || "{}");
       const selected = parsed.selected_items || {};
       const extras = parsed.extra_items || [];
-
       const mealQty = Number(r.meal_qty || 1);
 
-      /* =========================
-         🍞 BASE BREAD (MEAL)
-      ========================= */
-      if (selected.bread_id) {
-        const totalBread =
-          Number(r.bread_count || 0) * mealQty;
+      /* 🍞 BASE BREAD (FROM bread_config) */
+      if (selected.bread_id && r.bread_config) {
+        const breadConfig = JSON.parse(r.bread_config);
 
-        countMap.bread[selected.bread_id] =
-          (countMap.bread[selected.bread_id] || 0) + totalBread;
+        const found = breadConfig.find(
+          b => Number(b.bread_id) === Number(selected.bread_id)
+        );
+
+        if (found) {
+          const totalBread = Number(found.qty) * mealQty;
+
+          countMap.bread[selected.bread_id] =
+            (countMap.bread[selected.bread_id] || 0) + totalBread;
+        }
       }
 
-      /* =========================
-         🥗 BASE SUBJI (MEAL)
-      ========================= */
-      if (Array.isArray(selected.subji_ids) && selected.subji_ids.length) {
-        const totalSubji =
-          Number(r.subji_count || 0) * mealQty;
-
-        const perSubji = totalSubji / selected.subji_ids.length;
+      /* 🥗 SUBJI */
+      if (Array.isArray(selected.subji_ids)) {
+        const perSubji =
+          Number(r.subji_count || 0) * mealQty / selected.subji_ids.length;
 
         for (let sid of selected.subji_ids) {
           countMap.subji[sid] =
@@ -1330,9 +1366,7 @@ exports.getKitchenSummary = async (req, res) => {
         }
       }
 
-      /* =========================
-         ➕ EXTRA ITEMS
-      ========================= */
+      /* ➕ EXTRA ITEMS */
       for (let ex of extras) {
         if (!countMap[ex.item_type]) continue;
 
@@ -1342,9 +1376,7 @@ exports.getKitchenSummary = async (req, res) => {
       }
     }
 
-    /* =========================
-       RESOLVE NAMES
-    ========================= */
+    /* RESOLVE NAMES */
     const result = [];
 
     for (let id in countMap.bread) {
@@ -1401,6 +1433,7 @@ exports.getKitchenSummary = async (req, res) => {
 
 
 
+
 exports.getAdminDailyOrders = async (req, res) => {
   try {
     const { date, slot } = req.query;
@@ -1430,9 +1463,7 @@ exports.getAdminDailyOrders = async (req, res) => {
         oi.selected_items,
         m.meals_id,
         m.meals_name,
-        m.bread_count,
-        m.subji_count,
-        m.other_count
+        m.bread_config
       FROM order_schedule os
       JOIN orders o ON o.order_id=os.order_id AND o.status='active'
       JOIN users u ON u.user_id=o.user_id
@@ -1441,7 +1472,6 @@ exports.getAdminDailyOrders = async (req, res) => {
       JOIN meals m ON m.meals_id=oi.meals_id
       WHERE os.delivery_date='${date}'
         AND os.slot='${slot}'
-      ORDER BY o.order_id ASC
       `
     );
 
@@ -1450,30 +1480,25 @@ exports.getAdminDailyOrders = async (req, res) => {
     for (let r of rows) {
       const parsed = JSON.parse(r.selected_items || "{}");
       const selected = parsed.selected_items || {};
-      const extras = parsed.extra_items || [];
 
-      // 🍞 Bread
       let bread = null;
-      if (selected.bread_id) {
+      let breadQty = 0;
+
+      if (selected.bread_id && r.bread_config) {
         bread = await dbQuery.fetchSingleRecord(
           constants.vals.defaultDB,
           "breads",
           `WHERE bread_id=${selected.bread_id}`,
-          "bread_id, name, price"
+          "bread_id, name"
         );
-      }
 
-      // 🥗 Subjis
-      let subjis = [];
-      if (Array.isArray(selected.subji_ids)) {
-        for (let sid of selected.subji_ids) {
-          const s = await dbQuery.fetchSingleRecord(
-            constants.vals.defaultDB,
-            "subjis",
-            `WHERE subji_id=${sid}`,
-            "subji_id, name, price"
-          );
-          if (s) subjis.push(s);
+        const breadConfig = JSON.parse(r.bread_config);
+        const found = breadConfig.find(
+          b => Number(b.bread_id) === Number(selected.bread_id)
+        );
+
+        if (found) {
+          breadQty = Number(found.qty) * Number(r.quantity);
         }
       }
 
@@ -1494,20 +1519,14 @@ exports.getAdminDailyOrders = async (req, res) => {
         meal: {
           meal_id: r.meals_id,
           name: r.meals_name,
-          quantity: r.quantity,
-          structure: {
-            bread_count: r.bread_count,
-            subji_count: r.subji_count,
-            other_count: r.other_count
-          }
+          quantity: r.quantity
         },
 
         selected_items: {
-          bread,
-          subjis
+          bread: bread
+            ? { ...bread, total_qty: breadQty }
+            : null
         },
-
-        extra_items: extras,
 
         payment: {
           total_amount: r.total_amount,
@@ -1527,6 +1546,7 @@ exports.getAdminDailyOrders = async (req, res) => {
     res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
+
 
 
 
