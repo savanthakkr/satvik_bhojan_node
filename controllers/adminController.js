@@ -147,75 +147,116 @@ exports.adminGetProfile = async (req, res) => {
 
 
 exports.addMeal = async (req, res) => {
-    try {
-        const body = req.body.inputdata;
-        let response = { status: "error", msg: "" };
+  try {
+    const body = req.body.inputdata;
+    let response = { status: "error", msg: "" };
 
-        if (!body.meals_name) {
-            response.msg = "Meal name is required.";
-            return utility.apiResponse(req, res, response);
-        }
-        if (!body.price) {
-            response.msg = "Meal price is required.";
-            return utility.apiResponse(req, res, response);
-        }
-
-        const params = {
-            meals_name: body.meals_name,
-            price: body.price,
-            description: body.description || null,
-            bread_count: body.bread_count || 0,
-            subji_count: body.subji_count || 0,
-            other_count: body.other_count || 0,
-            is_special_meal: body.is_special_meal || 0,
-            special_item_id: body.special_item_id || null,
-            is_active: 1,
-            is_delete: 0,
-            created_at: req.locals.now
-        };
-
-        const insert = await dbQuery.insertSingle(constants.vals.defaultDB, "meals", params);
-        const mealId = insert?.insertId || insert;
-
-        response.status = "success";
-        response.msg = "Meal added successfully.";
-        response.data = { meal_id: mealId };
-
-        return utility.apiResponse(req, res, response);
+    if (!body.meals_name) {
+      response.msg = "Meal name is required.";
+      return utility.apiResponse(req, res, response);
     }
-    catch (error) {
-        console.error("Add Meal Error:", error);
-        return res.status(500).json({ status: "error", msg: "Internal server error" });
+
+    if (!body.price) {
+      response.msg = "Meal price is required.";
+      return utility.apiResponse(req, res, response);
     }
+
+    /* ---------------- BREAD CONFIG ---------------- */
+    let breadConfig = null;
+
+    if (Array.isArray(body.bread_config)) {
+      breadConfig = JSON.stringify(
+        body.bread_config.map(b => ({
+          bread_id: Number(b.bread_id),
+          max_qty: Number(b.max_qty)
+        }))
+      );
+    }
+
+    /* ---------------- INSERT MEAL ---------------- */
+    const params = {
+      meals_name: body.meals_name,
+      price: body.price,
+      description: body.description || null,
+      bread_count: body.bread_count || 0, // total allowed
+      subji_count: body.subji_count || 0,
+      other_count: body.other_count || 0,
+      bread_config: breadConfig,           // ✅ NEW
+      is_special_meal: body.is_special_meal || 0,
+      special_item_id: body.special_item_id || null,
+      is_active: 1,
+      is_delete: 0,
+      created_at: req.locals.now
+    };
+
+    const insert = await dbQuery.insertSingle(
+      constants.vals.defaultDB,
+      "meals",
+      params
+    );
+
+    response.status = "success";
+    response.msg = "Meal added successfully";
+    response.data = {
+      meal_id: insert?.insertId || insert
+    };
+
+    return utility.apiResponse(req, res, response);
+
+  } catch (error) {
+    console.error("Add Meal Error:", error);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
+  }
 };
+
 
 
 
 
 exports.getMeals = async (req, res) => {
-    try {
-        const condition = "WHERE is_delete = 0";
-        const fields =
-            "meals_id, meals_name, price, description, bread_count, subji_count, other_count, is_special_meal, special_item_id, is_active, created_at";
+  try {
+    const meals = await dbQuery.fetchRecords(
+      constants.vals.defaultDB,
+      "meals",
+      "WHERE is_delete=0",
+      `
+        meals_id,
+        meals_name,
+        price,
+        description,
+        bread_count,
+        bread_config,
+        subji_count,
+        other_count,
+        is_special_meal,
+        special_item_id,
+        is_active
+      `
+    );
 
-        const meals = await dbQuery.fetchRecords(
-            constants.vals.defaultDB,
-            "meals",
-            condition,
-            fields
-        );
+    const formatted = meals.map(m => ({
+      ...m,
+      bread_config: m.bread_config ? JSON.parse(m.bread_config) : []
+    }));
 
-        return utility.apiResponse(req, res, {
-            status: "success",
-            msg: "Meals fetched successfully.",
-            data: meals
-        });
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Meals fetched successfully",
+      data: formatted
+    });
 
-    } catch (error) {
-        console.error("Get Meals Error:", error);
-        return res.status(500).json({ status: "error", msg: "Internal server error" });
-    }
+  } catch (error) {
+    console.error("Get Meals Error:", error);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
+  }
 };
+
 
 
 
