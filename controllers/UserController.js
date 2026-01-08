@@ -1023,10 +1023,13 @@ exports.createOrder = async (req, res) => {
     const { address_id, slot, delivery_dates, payment_type } = req.body.inputdata;
 
     if (!delivery_dates?.length) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Delivery dates required" });
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Delivery dates required"
+      });
     }
 
-    /* SLOT CUTOFF */
+    /* ---------------- SLOT CUTOFF ---------------- */
     const slotRow = await dbQuery.fetchSingleRecord(
       constants.vals.defaultDB,
       "menu_slots",
@@ -1035,23 +1038,33 @@ exports.createOrder = async (req, res) => {
 
     const now = new Date().toTimeString().slice(0, 5);
     if (now > slotRow.order_cutoff) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Order time closed" });
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Order time closed"
+      });
     }
 
-    /* CART */
+    /* ---------------- CART ---------------- */
     const cartItems = await dbQuery.rawQuery(
       constants.vals.defaultDB,
       `SELECT * FROM user_cart WHERE user_id=${user_id}`
     );
 
     if (!cartItems.length) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Cart empty" });
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Cart empty"
+      });
     }
 
-    let totalAmount = cartItems.reduce((s, c) => s + Number(c.total_price), 0);
+    let totalAmount = cartItems.reduce(
+      (sum, c) => sum + Number(c.total_price),
+      0
+    );
+
     totalAmount *= delivery_dates.length;
 
-    /* CREATE ORDER */
+    /* ---------------- CREATE ORDER ---------------- */
     const order_id = await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "orders",
@@ -1059,15 +1072,21 @@ exports.createOrder = async (req, res) => {
         user_id,
         order_type: delivery_dates.length > 1 ? "subscription" : "single",
         total_amount: totalAmount,
-        payment_type,
         is_paid: 0,
         status: payment_type === "online" ? "pending" : "active",
         created_at: req.locals.now
       }
     );
 
-    /* ORDER ITEMS + SCHEDULE */
+    if (!order_id) {
+      throw new Error("Order not created");
+    }
+
+    /* ---------------- ORDER ITEMS + SCHEDULE ---------------- */
     for (let c of cartItems) {
+      const selected_items = JSON.parse(c.selected_items || "{}");
+      const extra_items = JSON.parse(c.extra_items || "[]");
+
       const order_item_id = await dbQuery.insertSingle(
         constants.vals.defaultDB,
         "order_items",
@@ -1078,8 +1097,8 @@ exports.createOrder = async (req, res) => {
           price: c.total_price,
           selection_mode: "fixed",
           selected_items: JSON.stringify({
-            selected_items: JSON.parse(c.selected_items || "{}"),
-            extra_items: JSON.parse(c.extra_items || "[]")
+            selected_items,
+            extra_items
           }),
           created_at: req.locals.now
         }
@@ -1101,72 +1120,60 @@ exports.createOrder = async (req, res) => {
       }
     }
 
+    /* ---------------- CLEAR CART ---------------- */
     await dbQuery.rawQuery(
       constants.vals.defaultDB,
       `DELETE FROM user_cart WHERE user_id=${user_id}`
     );
 
-    /* PAY LATER */
+    /* =====================================================
+       🟢 PAY LATER → DONE
+       ===================================================== */
     if (payment_type === "later") {
-      await dbQuery.insertSingle(constants.vals.defaultDB, "wallet_transactions", {
-        user_id,
-        order_id,
-        type: "debit",
-        amount: totalAmount,
-        description: "Order placed (Pay later)"
-      });
-
       return utility.apiResponse(req, res, {
         status: "success",
-        msg: "Order placed (Pay later)",
-        data: { order_id }
+        msg: "Order placed successfully",
+        data: { order_id, totalAmount }
       });
     }
 
-    /* ONLINE PAYMENT */
+    /* =====================================================
+       🔵 ONLINE PAYMENT → CREATE RAZORPAY ORDER
+       ===================================================== */
     const razorpayOrder = await razorpay.orders.create({
       amount: totalAmount * 100,
       currency: "INR",
-      receipt: `order_${order_id}`
+      receipt: `order_${order_id}`,
+      payment_capture: 1
     });
-
-    const payment_id = await dbQuery.insertSingle(
-      constants.vals.defaultDB,
-      "payments",
-      {
-        user_id,
-        order_id,
-        payment_type: "order",
-        transaction_id: razorpayOrder.id,
-        amount: totalAmount,
-        payment_status: "pending",
-        created_at: req.locals.now
-      }
-    );
 
     await dbQuery.updateRecord(
       constants.vals.defaultDB,
       "orders",
       `order_id=${order_id}`,
-      `payment_id=${payment_id}`
+      `razorpay_order_id='${razorpayOrder.id}'`
     );
 
     return utility.apiResponse(req, res, {
       status: "success",
-      msg: "Proceed to payment",
+      msg: "Order created. Proceed to payment",
       data: {
         order_id,
         razorpay: {
-          key: process.env.RAZORPAY_KEY_ID,
+          key: "rzp_test_S0ysEwOgi9ZKUb",
           order_id: razorpayOrder.id,
-          amount: razorpayOrder.amount
+          amount: razorpayOrder.amount,
+          currency: "INR"
         }
       }
     });
 
   } catch (err) {
-    console.error("CREATE ORDER ERROR", err);
-    res.status(500).json({ status: "error", msg: "Internal error" });
+    console.error("CREATE ORDER ERROR:", err);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
   }
 };
 
@@ -1174,39 +1181,55 @@ exports.createOrder = async (req, res) => {
 
 
 
-
 exports.verifyPayment = async (req, res) => {
   try {
-    const { order_id, razorpay_order_id, razorpay_payment_id, razorpay_signature } =
-      req.body.inputdata;
+    const {
+      order_id,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature
+    } = req.body.inputdata;
 
     const body = razorpay_order_id + "|" + razorpay_payment_id;
 
     const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .createHmac("sha256", "Hqbl27FSCC5em6EHEdDUhY2w")
       .update(body)
       .digest("hex");
 
     if (expectedSignature !== razorpay_signature) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Invalid payment" });
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Payment verification failed"
+      });
     }
 
-    await dbQuery.updateRecord(
+    // 🔹 INSERT PAYMENT RECORD
+    const payment_id = await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "payments",
-      `transaction_id='${razorpay_order_id}'`,
-      `
-        payment_status='completed',
-        transaction_id='${razorpay_payment_id}',
-        payment_date='${req.locals.now}'
-      `
+      {
+        user_id: req.userInfo.user_id,
+        order_id,
+        payment_type: "order",
+        transaction_id: razorpay_payment_id,
+        amount: null, // optional, order already has total
+        payment_status: "completed",
+        payment_date: req.locals.now
+      }
     );
 
+    // 🔹 UPDATE ORDER
     await dbQuery.updateRecord(
       constants.vals.defaultDB,
       "orders",
       `order_id=${order_id}`,
-      `is_paid=1, status='paid'`
+      `
+        is_paid=1,
+        status='paid',
+        payment_type='online',
+        payment_id=${payment_id}
+      `
     );
 
     return utility.apiResponse(req, res, {
@@ -1216,10 +1239,12 @@ exports.verifyPayment = async (req, res) => {
 
   } catch (err) {
     console.error("VERIFY PAYMENT ERROR", err);
-    res.status(500).json({ status: "error", msg: "Internal error" });
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal error"
+    });
   }
 };
-
 
 
 
