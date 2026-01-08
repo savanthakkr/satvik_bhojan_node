@@ -1631,11 +1631,12 @@ exports.getPendingPayments = async (req, res) => {
 
 exports.adminGetUsers = async (req, res) => {
   try {
-    const { pay_later } = req.query; // 1 or 0
+    const { pay_later } = req.query;
 
-    let where = `u.is_delete=0`;
-    if (pay_later === "1") where += ` AND u.allow_pay_later=1`;
-    if (pay_later === "0") where += ` AND u.allow_pay_later=0`;
+    let where = "u.is_delete=0";
+
+    if (pay_later === "1") where += " AND u.allow_pay_later=1";
+    if (pay_later === "0") where += " AND u.allow_pay_later=0";
 
     const rows = await dbQuery.rawQuery(
       constants.vals.defaultDB,
@@ -1648,7 +1649,6 @@ exports.adminGetUsers = async (req, res) => {
         u.is_active,
         u.allow_pay_later,
         u.pay_later_limit,
-        u.created_at,
 
         COUNT(DISTINCT o.order_id) AS total_orders,
 
@@ -1681,6 +1681,7 @@ exports.adminGetUsers = async (req, res) => {
     res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
+
 
 
 exports.adminUserDetails = async (req, res) => {
@@ -1846,26 +1847,13 @@ exports.adminUserOrderHistory = async (req, res) => {
 exports.setPayLaterAccess = async (req, res) => {
   try {
     const body = req.body.inputdata || {};
-
-    let {
-      apply_for,
+    const {
+      apply_for,        // all | single | multiple
       user_ids = [],
       user_id,
       allow_pay_later,
       pay_later_limit
     } = body;
-
-    /* ===============================
-       NORMALIZE VALUES
-    =============================== */
-    allow_pay_later = Number(allow_pay_later);
-
-    if (![0, 1].includes(allow_pay_later)) {
-      return utility.apiResponse(req, res, {
-        status: "error",
-        msg: "allow_pay_later must be 0 or 1"
-      });
-    }
 
     if (!["all", "single", "multiple"].includes(apply_for)) {
       return utility.apiResponse(req, res, {
@@ -1874,9 +1862,13 @@ exports.setPayLaterAccess = async (req, res) => {
       });
     }
 
-    /* ===============================
-       BUILD WHERE CLAUSE
-    =============================== */
+    if (![0, 1].includes(allow_pay_later)) {
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "allow_pay_later must be 0 or 1"
+      });
+    }
+
     let where = "";
 
     if (apply_for === "single") {
@@ -1886,41 +1878,28 @@ exports.setPayLaterAccess = async (req, res) => {
           msg: "user_id required"
         });
       }
-      where = `user_id=${Number(user_id)}`;
+      where = `user_id=${user_id}`;
     }
 
     if (apply_for === "multiple") {
-      if (!Array.isArray(user_ids) || !user_ids.length) {
+      if (!user_ids.length) {
         return utility.apiResponse(req, res, {
           status: "error",
           msg: "user_ids required"
         });
       }
-
-      const safeIds = user_ids.map(id => Number(id)).filter(Boolean);
-      where = `user_id IN (${safeIds.join(",")})`;
+      where = `user_id IN (${user_ids.join(",")})`;
     }
 
     if (apply_for === "all") {
       where = "1=1";
     }
 
-    /* ===============================
-       PAY LATER LIMIT LOGIC
-    =============================== */
-    let limitValue = "NULL";
+    const limitValue =
+      allow_pay_later === 1
+        ? Number(pay_later_limit || 0)
+        : null;
 
-    if (allow_pay_later === 1) {
-      limitValue = Number(pay_later_limit || 0);
-    }
-
-    if (allow_pay_later === 0) {
-      limitValue = 0; // ✅ FORCE RESET
-    }
-
-    /* ===============================
-       UPDATE
-    =============================== */
     await dbQuery.updateRecord(
       constants.vals.defaultDB,
       "users",
@@ -1933,7 +1912,7 @@ exports.setPayLaterAccess = async (req, res) => {
 
     return utility.apiResponse(req, res, {
       status: "success",
-      msg: "Pay Later access updated successfully"
+      msg: "Pay Later settings updated"
     });
 
   } catch (err) {
@@ -1944,6 +1923,7 @@ exports.setPayLaterAccess = async (req, res) => {
     });
   }
 };
+
 
 
 
