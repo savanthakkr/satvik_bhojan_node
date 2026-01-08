@@ -1150,16 +1150,21 @@ exports.verifyPayment = async (req, res) => {
   try {
     const user_id = req.userInfo.user_id;
     const {
+      payment_for,              // "order" | "wallet"
       order_id,
+      wallet_amount,
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature
     } = req.body.inputdata;
 
-    /* VERIFY SIGNATURE */
+    /* ===============================
+       1️⃣ VERIFY SIGNATURE
+    =============================== */
     const body = razorpay_order_id + "|" + razorpay_payment_id;
+
     const expectedSignature = crypto
-      .createHmac("sha256", "Hqbl27FSCC5em6EHEdDUhY2w")
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET || "Hqbl27FSCC5em6EHEdDUhY2w")
       .update(body)
       .digest("hex");
 
@@ -1170,67 +1175,132 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    /* FETCH ORDER */
-    const order = await dbQuery.fetchSingleRecord(
-      constants.vals.defaultDB,
-      "orders",
-      `WHERE order_id=${order_id} AND user_id=${user_id}`
-    );
+    /* ===============================
+       2️⃣ ORDER PAYMENT
+    =============================== */
+    if (payment_for === "order") {
 
-    if (!order) {
-      return utility.apiResponse(req, res, {
-        status: "error",
-        msg: "Order not found"
-      });
-    }
+      if (!order_id) {
+        return utility.apiResponse(req, res, {
+          status: "error",
+          msg: "Order ID required"
+        });
+      }
 
-    if (order.is_paid == 1) {
+      const order = await dbQuery.fetchSingleRecord(
+        constants.vals.defaultDB,
+        "orders",
+        `WHERE order_id=${order_id} AND user_id=${user_id}`
+      );
+
+      if (!order) {
+        return utility.apiResponse(req, res, {
+          status: "error",
+          msg: "Order not found"
+        });
+      }
+
+      if (order.is_paid == 1) {
+        return utility.apiResponse(req, res, {
+          status: "success",
+          msg: "Order already paid"
+        });
+      }
+
+      /* INSERT PAYMENT */
+      const payment_id = await dbQuery.insertSingle(
+        constants.vals.defaultDB,
+        "payments",
+        {
+          user_id,
+          order_id,
+          payment_type: "order",
+          transaction_id: razorpay_payment_id,
+          amount: order.total_amount,
+          payment_status: "completed",
+          payment_date: req.locals.now
+        }
+      );
+
+      /* UPDATE ORDER */
+      await dbQuery.updateRecord(
+        constants.vals.defaultDB,
+        "orders",
+        `order_id=${order_id}`,
+        `
+          is_paid=1,
+          payment_type='online',
+          payment_id=${payment_id}
+        `
+      );
+
       return utility.apiResponse(req, res, {
         status: "success",
-        msg: "Order already paid"
+        msg: "Order payment successful"
       });
     }
 
-    /* INSERT PAYMENT */
-    const payment_id = await dbQuery.insertSingle(
-      constants.vals.defaultDB,
-      "payments",
-      {
-        user_id,
-        order_id,
-        payment_type: "order",
-        transaction_id: razorpay_payment_id,
-        amount: order.total_amount, // ✅ NEVER NULL
-        payment_status: "completed",
-        payment_date: req.locals.now
+    /* ===============================
+       3️⃣ WALLET PAYMENT
+    =============================== */
+    if (payment_for === "wallet") {
+
+      if (!wallet_amount || wallet_amount <= 0) {
+        return utility.apiResponse(req, res, {
+          status: "error",
+          msg: "Valid wallet amount required"
+        });
       }
-    );
 
-    /* UPDATE ORDER (✅ CORRECT) */
-    await dbQuery.updateRecord(
-      constants.vals.defaultDB,
-      "orders",
-      `order_id=${order_id}`,
-      `
-        is_paid=1,
-        payment_type='online',
-        payment_id=${payment_id}
-      `
-    );
+      /* INSERT PAYMENT */
+      await dbQuery.insertSingle(
+        constants.vals.defaultDB,
+        "payments",
+        {
+          user_id,
+          payment_type: "wallet",
+          transaction_id: razorpay_payment_id,
+          amount: wallet_amount,
+          payment_status: "completed",
+          payment_date: req.locals.now
+        }
+      );
 
+      /* WALLET TRANSACTION */
+      await dbQuery.insertSingle(
+        constants.vals.defaultDB,
+        "wallet_transactions",
+        {
+          user_id,
+          type: "credit",
+          amount: wallet_amount,
+          description: "Wallet top-up (Razorpay)"
+        }
+      );
+
+      return utility.apiResponse(req, res, {
+        status: "success",
+        msg: "Wallet recharge successful"
+      });
+    }
+
+    /* ===============================
+       ❌ INVALID TYPE
+    =============================== */
     return utility.apiResponse(req, res, {
-      status: "success",
-      msg: "Payment successful"
+      status: "error",
+      msg: "Invalid payment type"
     });
 
   } catch (err) {
-    console.error("VERIFY PAYMENT ERROR:", err);
+    console.error("VERIFY RAZORPAY PAYMENT ERROR:", err);
     return res.status(500).json({
       status: "error",
-      msg: "Internal error"
+      msg: "Internal server error"
     });
   }
 };
+
 
 
 
