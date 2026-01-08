@@ -1768,78 +1768,47 @@ exports.getWallet = async (req, res) => {
 exports.payWallet = async (req, res) => {
   try {
     const user_id = req.userInfo.user_id;
-    const { order_id, amount, transaction_id } = req.body.inputdata;
+    const { amount } = req.body.inputdata;
 
-    const order = await dbQuery.fetchSingleRecord(
-      constants.vals.defaultDB,
-      "orders",
-      `WHERE order_id=${order_id} AND user_id=${user_id}`
-    );
-
-    if (!order) {
+    if (!amount || Number(amount) <= 0) {
       return utility.apiResponse(req, res, {
         status: "error",
-        msg: "Order not found"
+        msg: "Valid amount required"
       });
     }
 
-    if (order.is_paid == 1) {
-      return utility.apiResponse(req, res, {
-        status: "error",
-        msg: "Order already paid"
-      });
-    }
-
-    // 🔹 INSERT PAYMENT
-    const payment_id = await dbQuery.insertSingle(
-      constants.vals.defaultDB,
-      "payments",
-      {
-        user_id,
-        order_id,
-        payment_type: "order",
-        transaction_id,
-        amount,
-        payment_status: "completed",
-        payment_date: req.locals.now
-      }
-    );
-
-    // 🔹 WALLET TRANSACTION
-    await dbQuery.insertSingle(
-      constants.vals.defaultDB,
-      "wallet_transactions",
-      {
-        user_id,
-        order_id,
-        type: "credit",
-        amount,
-        description: "Wallet payment (online)"
-      }
-    );
-
-    // 🔹 UPDATE ORDER
-    await dbQuery.updateRecord(
-      constants.vals.defaultDB,
-      "orders",
-      `order_id=${order_id}`,
-      `
-        is_paid=1,
-        status='paid',
-        payment_id=${payment_id}
-      `
-    );
+    /* ===============================
+       CREATE RAZORPAY ORDER
+    =============================== */
+    const razorpayOrder = await razorpay.orders.create({
+      amount: Number(amount) * 100,   // paise
+      currency: "INR",
+      receipt: `wallet_${user_id}_${Date.now()}`,
+      payment_capture: 1
+    });
 
     return utility.apiResponse(req, res, {
       status: "success",
-      msg: "Order paid successfully"
+      msg: "Proceed to wallet payment",
+      data: {
+        razorpay: {
+          key: "rzp_test_S0ysEwOgi9ZKUb",
+          order_id: razorpayOrder.id,
+          amount: razorpayOrder.amount,
+          currency: razorpayOrder.currency
+        }
+      }
     });
 
   } catch (err) {
-    console.error("PAY WALLET ERROR", err);
-    res.status(500).json({ status: "error", msg: "Internal error" });
+    console.error("PAY WALLET ERROR:", err);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
   }
 };
+
 
 
 
