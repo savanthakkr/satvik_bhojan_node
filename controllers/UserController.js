@@ -1146,7 +1146,6 @@ exports.createOrder = async (req, res) => {
 
 
 
-
 exports.verifyPayment = async (req, res) => {
   try {
     const user_id = req.userInfo.user_id;
@@ -1165,10 +1164,13 @@ exports.verifyPayment = async (req, res) => {
       .digest("hex");
 
     if (expectedSignature !== razorpay_signature) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Payment verification failed" });
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Payment verification failed"
+      });
     }
 
-    /* FETCH ORDER (FOR AMOUNT) */
+    /* FETCH ORDER */
     const order = await dbQuery.fetchSingleRecord(
       constants.vals.defaultDB,
       "orders",
@@ -1176,7 +1178,17 @@ exports.verifyPayment = async (req, res) => {
     );
 
     if (!order) {
-      return utility.apiResponse(req, res, { status: "error", msg: "Order not found" });
+      return utility.apiResponse(req, res, {
+        status: "error",
+        msg: "Order not found"
+      });
+    }
+
+    if (order.is_paid == 1) {
+      return utility.apiResponse(req, res, {
+        status: "success",
+        msg: "Order already paid"
+      });
     }
 
     /* INSERT PAYMENT */
@@ -1188,20 +1200,19 @@ exports.verifyPayment = async (req, res) => {
         order_id,
         payment_type: "order",
         transaction_id: razorpay_payment_id,
-        amount: order.total_amount,   // ✅ NEVER NULL
+        amount: order.total_amount, // ✅ NEVER NULL
         payment_status: "completed",
         payment_date: req.locals.now
       }
     );
 
-    /* UPDATE ORDER */
+    /* UPDATE ORDER (✅ CORRECT) */
     await dbQuery.updateRecord(
       constants.vals.defaultDB,
       "orders",
       `order_id=${order_id}`,
       `
         is_paid=1,
-        status='paid',
         payment_type='online',
         payment_id=${payment_id}
       `
@@ -1214,7 +1225,10 @@ exports.verifyPayment = async (req, res) => {
 
   } catch (err) {
     console.error("VERIFY PAYMENT ERROR:", err);
-    return res.status(500).json({ status: "error", msg: "Internal error" });
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal error"
+    });
   }
 };
 
