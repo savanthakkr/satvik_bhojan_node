@@ -149,39 +149,30 @@ exports.adminGetProfile = async (req, res) => {
 exports.addMeal = async (req, res) => {
   try {
     const body = req.body.inputdata;
-    let response = { status: "error", msg: "" };
 
     if (!body.meals_name) {
-      response.msg = "Meal name is required.";
-      return utility.apiResponse(req, res, response);
+      return utility.apiResponse(req, res, { status: "error", msg: "Meal name required" });
     }
 
     if (!body.price) {
-      response.msg = "Meal price is required.";
-      return utility.apiResponse(req, res, response);
+      return utility.apiResponse(req, res, { status: "error", msg: "Meal price required" });
     }
 
-    /* ---------------- BREAD CONFIG ---------------- */
+    /* 🔹 VALIDATE bread_config */
     let breadConfig = null;
 
     if (Array.isArray(body.bread_config)) {
-      breadConfig = JSON.stringify(
-        body.bread_config.map(b => ({
-          bread_id: Number(b.bread_id),
-          max_qty: Number(b.max_qty)
-        }))
-      );
+      breadConfig = JSON.stringify(body.bread_config); // ✅ IMPORTANT
     }
 
-    /* ---------------- INSERT MEAL ---------------- */
     const params = {
       meals_name: body.meals_name,
       price: body.price,
       description: body.description || null,
-      bread_count: body.bread_count || 0, // total allowed
+      bread_count: body.bread_count || 0,
+      bread_config: breadConfig,   // ✅ ALWAYS STRING
       subji_count: body.subji_count || 0,
       other_count: body.other_count || 0,
-      bread_config: breadConfig,           // ✅ NEW
       is_special_meal: body.is_special_meal || 0,
       special_item_id: body.special_item_id || null,
       is_active: 1,
@@ -189,26 +180,21 @@ exports.addMeal = async (req, res) => {
       created_at: req.locals.now
     };
 
-    const insert = await dbQuery.insertSingle(
+    const mealId = await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "meals",
       params
     );
 
-    response.status = "success";
-    response.msg = "Meal added successfully";
-    response.data = {
-      meal_id: insert?.insertId || insert
-    };
-
-    return utility.apiResponse(req, res, response);
-
-  } catch (error) {
-    console.error("Add Meal Error:", error);
-    return res.status(500).json({
-      status: "error",
-      msg: "Internal server error"
+    return utility.apiResponse(req, res, {
+      status: "success",
+      msg: "Meal added successfully",
+      data: { meal_id: mealId }
     });
+
+  } catch (err) {
+    console.error("ADD MEAL ERROR", err);
+    return res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
 
@@ -216,13 +202,13 @@ exports.addMeal = async (req, res) => {
 
 
 
+
 exports.getMeals = async (req, res) => {
   try {
-    const meals = await dbQuery.fetchRecords(
+    const meals = await dbQuery.rawQuery(
       constants.vals.defaultDB,
-      "meals",
-      "WHERE is_delete=0",
       `
+      SELECT 
         meals_id,
         meals_name,
         price,
@@ -234,28 +220,40 @@ exports.getMeals = async (req, res) => {
         is_special_meal,
         special_item_id,
         is_active
+      FROM meals
+      WHERE is_delete=0
       `
     );
 
-    const formatted = meals.map(m => ({
-      ...m,
-      bread_config: m.bread_config ? JSON.parse(m.bread_config) : []
-    }));
+    const formatted = meals.map(m => {
+      let breadConfig = [];
+
+      try {
+        if (m.bread_config) {
+          breadConfig = JSON.parse(m.bread_config);
+        }
+      } catch (e) {
+        breadConfig = []; // ✅ FAIL SAFE
+      }
+
+      return {
+        ...m,
+        bread_config: breadConfig
+      };
+    });
 
     return utility.apiResponse(req, res, {
       status: "success",
-      msg: "Meals fetched successfully",
+      msg: "Meals fetched",
       data: formatted
     });
 
-  } catch (error) {
-    console.error("Get Meals Error:", error);
-    return res.status(500).json({
-      status: "error",
-      msg: "Internal server error"
-    });
+  } catch (err) {
+    console.error("GET MEALS ERROR", err);
+    return res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
+
 
 
 
