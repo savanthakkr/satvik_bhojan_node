@@ -1029,6 +1029,7 @@ exports.createOrder = async (req, res) => {
       });
     }
 
+    /* ---------------- SLOT CUTOFF ---------------- */
     const slotRow = await dbQuery.fetchSingleRecord(
       constants.vals.defaultDB,
       "menu_slots",
@@ -1043,6 +1044,7 @@ exports.createOrder = async (req, res) => {
       });
     }
 
+    /* ---------------- CART ---------------- */
     const cartItems = await dbQuery.rawQuery(
       constants.vals.defaultDB,
       `SELECT * FROM user_cart WHERE user_id=${user_id}`
@@ -1055,9 +1057,14 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    let totalAmount = cartItems.reduce((s, c) => s + Number(c.total_price), 0);
+    let totalAmount = cartItems.reduce(
+      (sum, c) => sum + Number(c.total_price),
+      0
+    );
+
     totalAmount *= delivery_dates.length;
 
+    /* ---------------- CREATE ORDER ---------------- */
     const order_id = await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "orders",
@@ -1065,14 +1072,21 @@ exports.createOrder = async (req, res) => {
         user_id,
         order_type: delivery_dates.length > 1 ? "subscription" : "single",
         total_amount: totalAmount,
-        payment_type,
         is_paid: 0,
         status: payment_type === "online" ? "pending" : "active",
         created_at: req.locals.now
       }
     );
 
+    if (!order_id) {
+      throw new Error("Order not created");
+    }
+
+    /* ---------------- ORDER ITEMS + SCHEDULE ---------------- */
     for (let c of cartItems) {
+      const selected_items = JSON.parse(c.selected_items || "{}");
+      const extra_items = JSON.parse(c.extra_items || "[]");
+
       const order_item_id = await dbQuery.insertSingle(
         constants.vals.defaultDB,
         "order_items",
@@ -1083,9 +1097,10 @@ exports.createOrder = async (req, res) => {
           price: c.total_price,
           selection_mode: "fixed",
           selected_items: JSON.stringify({
-            selected_items: JSON.parse(c.selected_items || "{}"),
-            extra_items: JSON.parse(c.extra_items || "[]")
-          })
+            selected_items,
+            extra_items
+          }),
+          created_at: req.locals.now
         }
       );
 
@@ -1098,29 +1113,69 @@ exports.createOrder = async (req, res) => {
             order_item_id,
             delivery_date: date,
             slot,
-            address_id
+            address_id,
+            status: "scheduled"
           }
         );
       }
     }
 
+    /* ---------------- CLEAR CART ---------------- */
     await dbQuery.rawQuery(
       constants.vals.defaultDB,
       `DELETE FROM user_cart WHERE user_id=${user_id}`
     );
 
+    /* =====================================================
+       🟢 PAY LATER → DONE
+       ===================================================== */
+    if (payment_type === "later") {
+      return utility.apiResponse(req, res, {
+        status: "success",
+        msg: "Order placed successfully",
+        data: { order_id, totalAmount }
+      });
+    }
+
+    /* =====================================================
+       🔵 ONLINE PAYMENT → CREATE RAZORPAY ORDER
+       ===================================================== */
+    const razorpayOrder = await razorpay.orders.create({
+      amount: totalAmount * 100,
+      currency: "INR",
+      receipt: `order_${order_id}`,
+      payment_capture: 1
+    });
+
+    await dbQuery.updateRecord(
+      constants.vals.defaultDB,
+      "orders",
+      `order_id=${order_id}`,
+      `razorpay_order_id='${razorpayOrder.id}'`
+    );
+
     return utility.apiResponse(req, res, {
       status: "success",
-      msg: "Order placed",
-      data: { order_id, totalAmount }
+      msg: "Order created. Proceed to payment",
+      data: {
+        order_id,
+        razorpay: {
+          key: "rzp_test_S0ysEwOgi9ZKUb",
+          order_id: razorpayOrder.id,
+          amount: razorpayOrder.amount,
+          currency: "INR"
+        }
+      }
     });
 
   } catch (err) {
-    console.error("CREATE ORDER ERROR", err);
-    res.status(500).json({ status: "error", msg: "Internal error" });
+    console.error("CREATE ORDER ERROR:", err);
+    return res.status(500).json({
+      status: "error",
+      msg: "Internal server error"
+    });
   }
 };
-
 
 
 
@@ -1149,14 +1204,31 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
+    // 🔹 INSERT PAYMENT RECORD
+    const payment_id = await dbQuery.insertSingle(
+      constants.vals.defaultDB,
+      "payments",
+      {
+        user_id: req.userInfo.user_id,
+        order_id,
+        payment_type: "order",
+        transaction_id: razorpay_payment_id,
+        amount: null, // optional, order already has total
+        payment_status: "completed",
+        payment_date: req.locals.now
+      }
+    );
+
+    // 🔹 UPDATE ORDER
     await dbQuery.updateRecord(
       constants.vals.defaultDB,
       "orders",
       `order_id=${order_id}`,
       `
         is_paid=1,
-        status='active',
-        razorpay_payment_id='${razorpay_payment_id}'
+        status='paid',
+        payment_type='online',
+        payment_id=${payment_id}
       `
     );
 
@@ -1619,8 +1691,8 @@ exports.getWallet = async (req, res) => {
 
     let balance = 0;
     for (let t of txns) {
-      if (t.type === 'credit') balance += Number(t.amount);
-      if (t.type === 'debit') balance -= Number(t.amount);
+      if (t.type === 'credit') balance -= Number(t.amount);
+      if (t.type === 'debit') balance += Number(t.amount);
     }
 
     return utility.apiResponse(req, res, {
@@ -1637,7 +1709,6 @@ exports.getWallet = async (req, res) => {
     res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
-
 
 
 
@@ -1666,7 +1737,7 @@ exports.payWallet = async (req, res) => {
       });
     }
 
-    /* ---------- PAYMENT ENTRY ---------- */
+    // 🔹 INSERT PAYMENT
     const payment_id = await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "payments",
@@ -1681,7 +1752,7 @@ exports.payWallet = async (req, res) => {
       }
     );
 
-    /* ---------- WALLET CREDIT ---------- */
+    // 🔹 WALLET TRANSACTION
     await dbQuery.insertSingle(
       constants.vals.defaultDB,
       "wallet_transactions",
@@ -1694,7 +1765,7 @@ exports.payWallet = async (req, res) => {
       }
     );
 
-    /* ---------- UPDATE ORDER ---------- */
+    // 🔹 UPDATE ORDER
     await dbQuery.updateRecord(
       constants.vals.defaultDB,
       "orders",
@@ -1708,7 +1779,7 @@ exports.payWallet = async (req, res) => {
 
     return utility.apiResponse(req, res, {
       status: "success",
-      msg: "Order payment successful"
+      msg: "Order paid successfully"
     });
 
   } catch (err) {
@@ -1716,7 +1787,6 @@ exports.payWallet = async (req, res) => {
     res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
-
 
 
 
