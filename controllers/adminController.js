@@ -1325,6 +1325,8 @@ exports.getKitchenSummary = async (req, res) => {
       SELECT 
         oi.selected_items,
         oi.quantity AS meal_qty,
+        m.meals_id,
+        m.meals_name,
         m.bread_config,
         m.subji_count
       FROM order_schedule os
@@ -1336,9 +1338,10 @@ exports.getKitchenSummary = async (req, res) => {
       `
     );
 
-    const countMap = {
-      bread: {},
-      subji: {}
+    const summary = {
+      meals: {},   // meal-wise count
+      bread: {},   // bread_id => qty
+      subji: {}    // subji_id => qty
     };
 
     for (let r of rows) {
@@ -1347,9 +1350,13 @@ exports.getKitchenSummary = async (req, res) => {
       const extras = parsed.extra_items || [];
       const mealQty = Number(r.meal_qty || 1);
 
-      /* 🍞 BASE BREAD (FROM bread_config) */
+      /* 🍱 MEAL COUNT */
+      summary.meals[r.meals_id] =
+        (summary.meals[r.meals_id] || 0) + mealQty;
+
+      /* 🍞 BREAD COUNT (FROM bread_config) */
       if (selected.bread_id && r.bread_config) {
-        const breadConfig = JSON.parse(r.bread_config);
+        const breadConfig = normalizeJSON(r.bread_config);
 
         const found = breadConfig.find(
           b => Number(b.bread_id) === Number(selected.bread_id)
@@ -1358,67 +1365,79 @@ exports.getKitchenSummary = async (req, res) => {
         if (found) {
           const totalBread = Number(found.qty) * mealQty;
 
-          countMap.bread[selected.bread_id] =
-            (countMap.bread[selected.bread_id] || 0) + totalBread;
+          summary.bread[selected.bread_id] =
+            (summary.bread[selected.bread_id] || 0) + totalBread;
         }
       }
 
-      /* 🥗 SUBJI */
-      if (Array.isArray(selected.subji_ids)) {
+      /* 🥗 SUBJI COUNT */
+      if (Array.isArray(selected.subji_ids) && selected.subji_ids.length) {
         const perSubji =
           Number(r.subji_count || 0) * mealQty / selected.subji_ids.length;
 
         for (let sid of selected.subji_ids) {
-          countMap.subji[sid] =
-            (countMap.subji[sid] || 0) + perSubji;
+          summary.subji[sid] =
+            (summary.subji[sid] || 0) + perSubji;
         }
       }
 
       /* ➕ EXTRA ITEMS */
       for (let ex of extras) {
-        if (!countMap[ex.item_type]) continue;
+        if (!summary[ex.item_type]) continue;
 
-        countMap[ex.item_type][ex.item_id] =
-          (countMap[ex.item_type][ex.item_id] || 0) +
+        summary[ex.item_type][ex.item_id] =
+          (summary[ex.item_type][ex.item_id] || 0) +
           Number(ex.quantity || 0);
       }
     }
 
-    /* RESOLVE NAMES */
+    /* 🔄 RESOLVE NAMES */
     const result = [];
 
-    for (let id in countMap.bread) {
+    for (let mealId in summary.meals) {
+      const m = await dbQuery.fetchSingleRecord(
+        constants.vals.defaultDB,
+        "meals",
+        `WHERE meals_id=${mealId}`,
+        "meals_name"
+      );
+
+      result.push({
+        type: "meal",
+        id: mealId,
+        name: m.meals_name,
+        total_qty: summary.meals[mealId]
+      });
+    }
+
+    for (let id in summary.bread) {
       const b = await dbQuery.fetchSingleRecord(
         constants.vals.defaultDB,
         "breads",
         `WHERE bread_id=${id}`,
         "name"
       );
-      if (b) {
-        result.push({
-          item_type: "bread",
-          item_id: id,
-          name: b.name,
-          total_qty: countMap.bread[id]
-        });
-      }
+      result.push({
+        type: "bread",
+        id,
+        name: b.name,
+        total_qty: summary.bread[id]
+      });
     }
 
-    for (let id in countMap.subji) {
+    for (let id in summary.subji) {
       const s = await dbQuery.fetchSingleRecord(
         constants.vals.defaultDB,
         "subjis",
         `WHERE subji_id=${id}`,
         "name"
       );
-      if (s) {
-        result.push({
-          item_type: "subji",
-          item_id: id,
-          name: s.name,
-          total_qty: countMap.subji[id]
-        });
-      }
+      result.push({
+        type: "subji",
+        id,
+        name: s.name,
+        total_qty: summary.subji[id]
+      });
     }
 
     return utility.apiResponse(req, res, {
@@ -1429,12 +1448,10 @@ exports.getKitchenSummary = async (req, res) => {
 
   } catch (err) {
     console.error("KITCHEN SUMMARY ERROR", err);
-    res.status(500).json({
-      status: "error",
-      msg: "Internal server error"
-    });
+    res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
+
 
 
 
@@ -1488,25 +1505,30 @@ exports.getAdminDailyOrders = async (req, res) => {
     for (let r of rows) {
       const parsed = JSON.parse(r.selected_items || "{}");
       const selected = parsed.selected_items || {};
+      const extras = parsed.extra_items || [];
 
       let bread = null;
-      let breadQty = 0;
 
       if (selected.bread_id && r.bread_config) {
-        bread = await dbQuery.fetchSingleRecord(
+        const breadRow = await dbQuery.fetchSingleRecord(
           constants.vals.defaultDB,
           "breads",
           `WHERE bread_id=${selected.bread_id}`,
           "bread_id, name"
         );
 
-        const breadConfig = JSON.parse(r.bread_config);
+        const breadConfig = normalizeJSON(r.bread_config);
         const found = breadConfig.find(
           b => Number(b.bread_id) === Number(selected.bread_id)
         );
 
         if (found) {
-          breadQty = Number(found.qty) * Number(r.quantity);
+          bread = {
+            bread_id: breadRow.bread_id,
+            name: breadRow.name,
+            qty_per_meal: found.qty,
+            total_qty: found.qty * Number(r.quantity)
+          };
         }
       }
 
@@ -1531,9 +1553,8 @@ exports.getAdminDailyOrders = async (req, res) => {
         },
 
         selected_items: {
-          bread: bread
-            ? { ...bread, total_qty: breadQty }
-            : null
+          bread,
+          extras
         },
 
         payment: {
@@ -1554,6 +1575,7 @@ exports.getAdminDailyOrders = async (req, res) => {
     res.status(500).json({ status: "error", msg: "Internal error" });
   }
 };
+
 
 
 
